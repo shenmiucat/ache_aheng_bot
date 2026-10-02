@@ -1,36 +1,18 @@
-import os
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-
-# 專門給 Render 通訊埠檢查用的虛擬網頁服務
-class DummyHandler(BaseHTTPRequestHandler):
-
-  def do_GET(self):
-    self.send_response(200)
-    self.end_headers()
-    self.wfile.write(b"Bot is running!")
-
-
-def run_dummy_server():
-  port = int(os.environ.get("PORT", 10000))
-  server = HTTPServer(("0.0.0.0", port), DummyHandler)
-  server.serve_forever()
-
-
-# 在背景啟動虛擬網頁，讓 Render 能抓到 Port
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
 import datetime
 import json
 import os
 import random
 import socketserver
+import sys
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler
 import requests
 import urllib3
+
+# 強制 Log 即時輸出，不進行快取（解決 Render Logs 延遲顯示問題）
+if hasattr(sys.stdout, "reconfigure"):
+  sys.stdout.reconfigure(line_buffering=True)
 
 # 強制設定整個環境時區為台北時間 (UTC+8)
 os.environ["TZ"] = "Asia/Taipei"
@@ -54,7 +36,7 @@ def run_dummy_server():
       print(f"🌐 [Render 連線監聽] 已成功綁定 Port {port}")
       httpd.serve_forever()
   except Exception as e:
-    print(f"⚠️ 虛擬 Port 伺服器啟動失敗 (不影響機器人運作): {e}")
+    print(f"⚠️️ 虛擬 Port 伺服器啟動失敗 (不影響機器人運作): {e}")
 
 
 # ================= 基礎設定 =================
@@ -74,8 +56,8 @@ TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
 # 候選模型清單
 CANDIDATE_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
 ]
 
 session = requests.Session()
@@ -404,15 +386,14 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  # 取消 Header 帶 Key，全面改為 URL query parameter
   headers = {"Content-Type": "application/json"}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
   }
 
+  last_error = "所有模型皆無法回應"
   for model_name in CANDIDATE_MODELS:
-    # 關鍵修正：將 API Key 帶在 URL 參數，並將 timeout 增加至 30 秒
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     try:
       res = session.post(
@@ -423,23 +404,24 @@ def call_ai_brain(
             res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         )
       elif res.status_code == 429:
+        last_error = f"HTTP 429 (達到頻率限制/配額滿了)"
         print(
-            f"⚠️ [{char_name}] 模型 {model_name} 達到頻率限制 (429)，冷卻 2 秒並切換備援..."
+            f"⚠️ [{char_name}] 模型 {model_name} 達到頻率限制 (429)，冷卻 2"
+            " 秒並切換備援..."
         )
         time.sleep(2)
       else:
+        last_error = f"HTTP {res.status_code} - {res.text[:80]}"
         print(
             f"⚠️ [{char_name}] 模型 {model_name} 呼叫失敗"
             f" ({res.status_code}): {res.text}"
         )
     except Exception as e:
+      last_error = f"連線異常: {e}"
       print(f"⚠️ [{char_name}] 模型 {model_name} 連線異常: {e}，切換備援...")
 
-  return (
-      f"（{char_name}在旁邊喝茶發呆，沒聽清）"
-      if is_group
-      else f"（{char_name}若有所思地看著茶杯，沒聽清妳說什麼）"
-  )
+  # 遇到錯誤時直接把真實的原因發給 Telegram 視窗，不再提示茶杯
+  return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
 
 # ================= 發送 TG 訊息 =================
@@ -468,7 +450,7 @@ def random_tick_loop():
     now_hour = datetime.datetime.now()
     if 6 <= now_hour.hour < 22:
       msg = call_ai_brain("ache", is_auto=True, is_group=False)
-      if "[SILENCE]" in msg or not msg.strip():
+      if "[SILENCE]" in msg or not msg.strip() or "⚠️" in msg:
         continue
 
       update_memory(msg)
@@ -484,7 +466,6 @@ def random_tick_loop():
 # ================= 專屬監聽：阿珩私聊視窗 =================
 def aheng_listener_loop():
   last_update_id = 0
-  # 強制刷新阿珩的訊息起點
   try:
     res_init = session.get(
         TG_UPDATES_URL_AHENG, params={"offset": -1}, verify=False, timeout=5
@@ -544,7 +525,6 @@ def aheng_listener_loop():
 
 # ================= 主迴圈：阿澈私聊 & 群組相聲邏輯 =================
 def main():
-  # 啟動虛擬 Web 伺服器供 Render 健康檢查（防止服務一直被判定死亡而重新啟動）
   threading.Thread(target=run_dummy_server, daemon=True).start()
 
   print("\n雙人模式已啟動（阿澈 + 阿珩待命中，皆支援私聊與群聊）...")
@@ -554,7 +534,6 @@ def main():
   threading.Thread(target=aheng_listener_loop, daemon=True).start()
 
   last_update_id = 0
-  # 強制刷新阿澈 Telegram 的訊息起點
   try:
     res_init = session.get(
         TG_UPDATES_URL_ACHE, params={"offset": -1}, verify=False, timeout=5
