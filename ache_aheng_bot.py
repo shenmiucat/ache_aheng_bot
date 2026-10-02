@@ -70,9 +70,14 @@ HISTORY_FILE_AHENG = os.path.join(BASE_DIR, "aheng_history.json")
 GROUP_HISTORY_FILE = os.path.join(BASE_DIR, "group_history.json")
 MEMORY_FILE = os.path.join(BASE_DIR, "memory.json")
 
+chat_history = []
+aheng_history = []
+group_history = []
+
 
 def load_all_data_from_gist():
-  """從 Gist 下載所有紀錄檔並同步到本地環境"""
+  """開機時從 Gist 下載所有紀錄檔並載入到記憶體與本地檔案"""
+  global chat_history, aheng_history, group_history
   if not GIST_ID or not GIST_TOKEN:
     print("⚠️ 未設定 GIST_ID 或 GIST_TOKEN，維持本地檔案機制。")
     return
@@ -86,44 +91,32 @@ def load_all_data_from_gist():
     if res.status_code == 200:
       files = res.json().get("files", {})
 
-      # 讀取 bot_data.json
       if "bot_data.json" in files:
         raw_content = files["bot_data.json"].get("content", "{}")
         all_data = json.loads(raw_content)
 
+        notes = all_data.get("notes", [])
+        chat_history = all_data.get("ache_private", [])
+        aheng_history = all_data.get("aheng_private", [])
+        group_history = all_data.get("group", [])
+
         # 寫回本機 JSON 檔
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-          json.dump(
-              {"notes": all_data.get("notes", [])},
-              f,
-              ensure_ascii=False,
-              indent=2,
-          )
+          json.dump({"notes": notes}, f, ensure_ascii=False, indent=2)
         with open(HISTORY_FILE_ACHE, "w", encoding="utf-8") as f:
-          json.dump(
-              all_data.get("ache_private", []),
-              f,
-              ensure_ascii=False,
-              indent=2,
-          )
+          json.dump(chat_history, f, ensure_ascii=False, indent=2)
         with open(HISTORY_FILE_AHENG, "w", encoding="utf-8") as f:
-          json.dump(
-              all_data.get("aheng_private", []),
-              f,
-              ensure_ascii=False,
-              indent=2,
-          )
+          json.dump(aheng_history, f, ensure_ascii=False, indent=2)
         with open(GROUP_HISTORY_FILE, "w", encoding="utf-8") as f:
-          json.dump(
-              all_data.get("group", []), f, ensure_ascii=False, indent=2
-          )
+          json.dump(group_history, f, ensure_ascii=False, indent=2)
 
         print("☁️ [Gist 同步成功] 歷史對話與備忘記憶已從雲端載入！")
   except Exception as e:
     print(f"⚠️ 從 Gist 載入記憶失敗: {e}")
 
+
 def sync_all_data_to_gist():
-  """把當前的所有對話與記憶寫入 Gist 雲端備份"""
+  """將當前記憶體中的資料即時寫入 Gist 雲端"""
   if not GIST_ID or not GIST_TOKEN:
     return
   url = f"https://api.github.com/gists/{GIST_ID}"
@@ -133,9 +126,6 @@ def sync_all_data_to_gist():
   }
 
   notes = load_memory()
-  ache_hist = load_chat_history("ache_private")
-  aheng_hist = load_chat_history("aheng_private")
-  group_hist = load_chat_history("group")
 
   payload = {
       "files": {
@@ -143,9 +133,9 @@ def sync_all_data_to_gist():
               "content": json.dumps(
                   {
                       "notes": notes,
-                      "ache_private": ache_hist,
-                      "aheng_private": aheng_hist,
-                      "group": group_hist,
+                      "ache_private": chat_history,
+                      "aheng_private": aheng_history,
+                      "group": group_history,
                   },
                   ensure_ascii=False,
                   indent=2,
@@ -157,9 +147,11 @@ def sync_all_data_to_gist():
     res = session.patch(url, headers=headers, json=payload, timeout=10)
     if res.status_code == 200:
       print("☁️ [Gist 更新成功] 記憶已即時備份至 GitHub！")
+    else:
+      print(f"⚠️ 寫入 Gist 失敗，HTTP 狀態碼: {res.status_code}")
   except Exception as e:
     print(f"⚠️ 備份至 Gist 失敗: {e}")
-    
+
 
 # 初始化連線時同步雲端
 load_all_data_from_gist()
@@ -171,7 +163,7 @@ def format_private_msg(raw_text, char_name="阿澈"):
       line
       for line in raw_text.split("\n")
       if not line.strip().startswith("📝 記住：")
-      and not line.strip().startswith("🗑️ 忘記：")
+      and not line.strip().startswith("🗑️️ 忘記：")
   ])
 
   if "💭" in clean:
@@ -248,7 +240,7 @@ def update_memory(raw_text):
           changed = True
           print(f"🧠 [記憶新增] {entry}")
     elif line_str.startswith("🗑️ 忘記："):
-      item = line_str.replace("🗑️️ 忘記：", "").strip()
+      item = line_str.replace("🗑 忘記：", "").strip()
       before_len = len(notes)
       notes = [n for n in notes if item not in n]
       if len(notes) != before_len:
@@ -259,37 +251,12 @@ def update_memory(raw_text):
     try:
       with open(mem_path, "w", encoding="utf-8") as f:
         json.dump({"notes": notes}, f, ensure_ascii=False, indent=2)
-      sync_all_data_to_gist()  # 同步至 Gist
+      sync_all_data_to_gist()
     except Exception as e:
       print(f"❌ 記憶存檔失敗: {e}")
 
 
 # ================= 對話歷史持久化 =================
-def load_chat_history(file_type="ache_private"):
-  # 每次讀取對話歷史時，先從 Gist 載入最新雲端資料（包含妳手動改的）
-  load_all_data_from_gist()
-
-  if file_type == "group":
-    target_file = GROUP_HISTORY_FILE
-  elif file_type == "aheng_private":
-    target_file = HISTORY_FILE_AHENG
-  else:
-    target_file = HISTORY_FILE_ACHE
-
-  if not os.path.exists(target_file):
-    return []
-  try:
-    with open(target_file, "r", encoding="utf-8") as f:
-      return json.load(f)
-  except Exception:
-    return []
-
-
-chat_history = load_chat_history("ache_private")
-aheng_history = load_chat_history("aheng_private")
-group_history = load_chat_history("group")
-
-
 def save_chat_history(role, text, file_type="ache_private"):
   global chat_history, aheng_history, group_history
   weekdays = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
@@ -311,7 +278,7 @@ def save_chat_history(role, text, file_type="ache_private"):
   try:
     with open(target_file, "w", encoding="utf-8") as f:
       json.dump(target_list, f, ensure_ascii=False, indent=2)
-    sync_all_data_to_gist()  # 同步至 Gist
+    sync_all_data_to_gist()
   except Exception as e:
     print(f"❌ 對話歷史存檔失敗: {e}")
 
@@ -433,7 +400,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 呼叫 Gemini 大腦 (全顯性除錯回覆) =================
+# ================= 呼叫 Gemini 大腦 =================
 def call_ai_brain(
     character="ache",
     user_input=None,
