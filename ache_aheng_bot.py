@@ -1,14 +1,14 @@
-import datetime
-import json
 import os
-import random
-import socketserver
 import sys
-import threading
 import time
-from http.server import SimpleHTTPRequestHandler
+import json
+import random
+import datetime
 import requests
 import urllib3
+import socketserver
+import threading
+from http.server import SimpleHTTPRequestHandler
 
 # 強制 Log 即時刷新
 if hasattr(sys.stdout, "reconfigure"):
@@ -41,9 +41,11 @@ def run_dummy_server():
 # ================= 基礎設定 (全數改從安全環境變數讀取) =================
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# 從 Render Environment 讀取 Telegram Token
+# 從 Render Environment 讀取 Telegram Token & Gist 設定
 TG_BOT_TOKEN_ACHE = os.environ.get("TG_BOT_TOKEN_ACHE", "").strip()
 TG_BOT_TOKEN_AHENG = os.environ.get("TG_BOT_TOKEN_AHENG", "").strip()
+GIST_ID = os.environ.get("GIST_ID", "").strip()
+GIST_TOKEN = os.environ.get("GIST_TOKEN", "").strip()
 MY_CHAT_ID = 8773051890
 
 tg_base_ache = "https://api.telegram.org/bot" + TG_BOT_TOKEN_ACHE
@@ -60,6 +62,108 @@ CANDIDATE_MODELS = [
 ]
 
 session = requests.Session()
+
+# ================= GitHub Gist 雲端記憶同步機制 =================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+HISTORY_FILE_ACHE = os.path.join(BASE_DIR, "chat_history.json")
+HISTORY_FILE_AHENG = os.path.join(BASE_DIR, "aheng_history.json")
+GROUP_HISTORY_FILE = os.path.join(BASE_DIR, "group_history.json")
+MEMORY_FILE = os.path.join(BASE_DIR, "memory.json")
+
+
+def load_all_data_from_gist():
+  """從 Gist 下載所有紀錄檔並同步到本地環境"""
+  if not GIST_ID or not GIST_TOKEN:
+    print("⚠️ 未設定 GIST_ID 或 GIST_TOKEN，維持本地檔案機制。")
+    return
+  url = f"https://api.github.com/gists/{GIST_ID}"
+  headers = {
+      "Authorization": f"Bearer {GIST_TOKEN}",
+      "Accept": "application/vnd.github+json",
+  }
+  try:
+    res = session.get(url, headers=headers, timeout=10)
+    if res.status_code == 200:
+      files = res.json().get("files", {})
+
+      # 讀取 bot_data.json
+      if "bot_data.json" in files:
+        raw_content = files["bot_data.json"].get("content", "{}")
+        all_data = json.loads(raw_content)
+
+        # 寫回本機 JSON 檔
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+          json.dump(
+              {"notes": all_data.get("notes", [])},
+              f,
+              ensure_ascii=False,
+              indent=2,
+          )
+        with open(HISTORY_FILE_ACHE, "w", encoding="utf-8") as f:
+          json.dump(
+              all_data.get("ache_private", []),
+              f,
+              ensure_ascii=False,
+              indent=2,
+          )
+        with open(HISTORY_FILE_AHENG, "w", encoding="utf-8") as f:
+          json.dump(
+              all_data.get("aheng_private", []),
+              f,
+              ensure_ascii=False,
+              indent=2,
+          )
+        with open(GROUP_HISTORY_FILE, "w", encoding="utf-8") as f:
+          json.dump(
+              all_data.get("group", []), f, ensure_ascii=False, indent=2
+          )
+
+        print("☁️ [Gist 同步成功] 歷史對話與備忘記憶已從雲端載入！")
+  except Exception as e:
+    print(f"⚠️ 從 Gist 載入記憶失敗: {e}")
+
+
+def sync_all_data_to_gist():
+  """把當前的所有對話與記憶寫入 Gist 雲端備份"""
+  if not GIST_ID or not GIST_TOKEN:
+    return
+  url = f"https://api.github.com/gists/{GIST_ID}"
+  headers = {
+      "Authorization": f"Bearer {GIST_TOKEN}",
+      "Accept": "application/vnd.github+json",
+  }
+
+  notes = load_memory()
+  ache_hist = load_chat_history("ache_private")
+  aheng_hist = load_chat_history("aheng_private")
+  group_hist = load_chat_history("group")
+
+  payload = {
+      "files": {
+          "bot_data.json": {
+              "content": json.dumps(
+                  {
+                      "notes": notes,
+                      "ache_private": ache_hist,
+                      "aheng_private": aheng_hist,
+                      "group": group_hist,
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          }
+      }
+  }
+  try:
+    res = session.patch(url, headers=headers, json=payload, timeout=10)
+    if res.status_code == 200:
+      print("☁️ [Gist 更新成功] 記憶已即時備份至 GitHub！")
+  except Exception as e:
+    print(f"⚠️ 備份至 Gist 失敗: {e}")
+
+
+# 初始化連線時同步雲端
+load_all_data_from_gist()
 
 
 # ================= 輔助文字清理與格式化 =================
@@ -145,7 +249,7 @@ def update_memory(raw_text):
           changed = True
           print(f"🧠 [記憶新增] {entry}")
     elif line_str.startswith("🗑️ 忘記："):
-      item = line_str.replace("🗑️ 忘記：", "").strip()
+      item = line_str.replace("🗑️️ 忘記：", "").strip()
       before_len = len(notes)
       notes = [n for n in notes if item not in n]
       if len(notes) != before_len:
@@ -156,17 +260,12 @@ def update_memory(raw_text):
     try:
       with open(mem_path, "w", encoding="utf-8") as f:
         json.dump({"notes": notes}, f, ensure_ascii=False, indent=2)
+      sync_all_data_to_gist()  # 同步至 Gist
     except Exception as e:
       print(f"❌ 記憶存檔失敗: {e}")
 
 
 # ================= 對話歷史持久化 =================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HISTORY_FILE_ACHE = os.path.join(BASE_DIR, "chat_history.json")
-HISTORY_FILE_AHENG = os.path.join(BASE_DIR, "aheng_history.json")
-GROUP_HISTORY_FILE = os.path.join(BASE_DIR, "group_history.json")
-
-
 def load_chat_history(file_type="ache_private"):
   if file_type == "group":
     target_file = GROUP_HISTORY_FILE
@@ -210,6 +309,7 @@ def save_chat_history(role, text, file_type="ache_private"):
   try:
     with open(target_file, "w", encoding="utf-8") as f:
       json.dump(target_list, f, ensure_ascii=False, indent=2)
+    sync_all_data_to_gist()  # 同步至 Gist
   except Exception as e:
     print(f"❌ 對話歷史存檔失敗: {e}")
 
