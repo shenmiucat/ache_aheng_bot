@@ -52,7 +52,7 @@ tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
 TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 設定指定模型
+# 遵照指定模型
 CANDIDATE_MODELS = [
     "gemini-3.5-flash-lite",
 ]
@@ -143,7 +143,7 @@ def update_memory(raw_text):
           changed = True
           print(f"🧠 [記憶新增] {entry}")
     elif line_str.startswith("🗑️ 忘記："):
-      item = line_str.replace("🗑️️ 忘記：", "").strip()
+      item = line_str.replace("🗑️ 忘記：", "").strip()
       before_len = len(notes)
       notes = [n for n in notes if item not in n]
       if len(notes) != before_len:
@@ -329,7 +329,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 原生 HTTP 呼叫 Gemini (免 SDK) =================
+# ================= 直連 Vertex AI 通道 (專為 AQ. 金鑰設計) =================
 def call_ai_brain(
     character="ache",
     user_input=None,
@@ -380,7 +380,7 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  headers = {"Content-Type": "application/json", "x-goog-api-key": API_KEY}
+  headers = {"Content-Type": "application/json"}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
@@ -388,7 +388,8 @@ def call_ai_brain(
 
   last_error = "所有模型皆無法回應"
   for model_name in CANDIDATE_MODELS:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
+    # 使用 Vertex AI 通用免專案號碼端點 (專門處理 AQ. Express 金鑰)
+    url = f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={API_KEY}"
     try:
       res = session.post(
           url, headers=headers, json=payload, verify=False, timeout=30
@@ -398,7 +399,7 @@ def call_ai_brain(
             res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         )
       elif res.status_code == 429:
-        last_error = f"HTTP 429 (達到頻率限制/配額滿了)"
+        last_error = f"HTTP 429 (達到頻率限制)"
         time.sleep(2)
       else:
         last_error = f"HTTP {res.status_code} - {res.text[:100]}"
