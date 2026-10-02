@@ -36,11 +36,11 @@ def run_dummy_server():
       print(f"🌐 [Render 連線監聽] 已成功綁定 Port {port}")
       httpd.serve_forever()
   except Exception as e:
-    print(f"⚠️️ 虛擬 Port 伺服器啟動失敗 (不影響機器人運作): {e}")
+    print(f"⚠️ 虛擬 Port 伺服器啟動失敗 (不影響機器人運作): {e}")
 
 
 # ================= 基礎設定 =================
-API_KEY = "AQ.Ab8RN6JUq9-qxTGgqP4-61ZJOxnKcrRZZpWV2eZU3ToQsSgi5Q"
+API_KEY = "AQ.Ab8RN6IcLO6vD0Jx-0oq77ivtI6vkOOuXhO3lTcVkG3js2WfXA"
 TG_BOT_TOKEN_ACHE = "8832956921:AAElTmndvj0Alcl0usafLI2qNwTFNmcmlgA"
 TG_BOT_TOKEN_AHENG = "8856056737:AAG5QndXLI0J4ilsYPVjZUB6ysJAn49_30Y"
 MY_CHAT_ID = 8773051890  # 預設私聊綁定對象
@@ -386,11 +386,8 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  # Vertex AI 相容端點：將 key 帶在 Header，網址改走 /v1beta/chat/completions 或 Vertex Express 門口
-  headers = {
-      "Content-Type": "application/json",
-      "Authorization": f"Bearer {API_KEY}",
-  }
+  # Google 官方 API Key 標準驗證 Header
+  headers = {"Content-Type": "application/json", "x-goog-api-key": API_KEY}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
@@ -398,15 +395,12 @@ def call_ai_brain(
 
   last_error = "所有模型皆無法回應"
   for model_name in CANDIDATE_MODELS:
-    # 專門給 AQ. 開頭 Vertex AI 金鑰使用的 Express 網址
-    url = f"https://aiplatform.googleapis.com/v1beta1/projects/39741421025/locations/us-central1/publishers/google/models/{model_name}:generateContent"
+    # 同時在 Header 與 URL query parameter 帶入，確保 100% 驗證通過
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     try:
-      # 同時嘗試 URL 參數與 Header 雙重帶入，確保 100% 通過
-      url_with_key = f"{url}?key={API_KEY}"
       res = session.post(
-          url_with_key, headers=headers, json=payload, verify=False, timeout=30
+          url, headers=headers, json=payload, verify=False, timeout=30
       )
-
       if res.status_code == 200:
         return (
             res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -428,7 +422,6 @@ def call_ai_brain(
       last_error = f"連線異常: {e}"
       print(f"⚠️ [{char_name}] 模型 {model_name} 連線異常: {e}，切換備援...")
 
-  # 遇到錯誤時直接把真實的原因發給 Telegram 視窗，不再提示茶杯
   return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
 
