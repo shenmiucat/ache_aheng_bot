@@ -386,7 +386,11 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  headers = {"Content-Type": "application/json"}
+  # Vertex AI 相容端點：將 key 帶在 Header，網址改走 /v1beta/chat/completions 或 Vertex Express 門口
+  headers = {
+      "Content-Type": "application/json",
+      "Authorization": f"Bearer {API_KEY}",
+  }
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
@@ -394,11 +398,15 @@ def call_ai_brain(
 
   last_error = "所有模型皆無法回應"
   for model_name in CANDIDATE_MODELS:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
+    # 專門給 AQ. 開頭 Vertex AI 金鑰使用的 Express 網址
+    url = f"https://aiplatform.googleapis.com/v1beta1/projects/39741421025/locations/us-central1/publishers/google/models/{model_name}:generateContent"
     try:
+      # 同時嘗試 URL 參數與 Header 雙重帶入，確保 100% 通過
+      url_with_key = f"{url}?key={API_KEY}"
       res = session.post(
-          url, headers=headers, json=payload, verify=False, timeout=30
+          url_with_key, headers=headers, json=payload, verify=False, timeout=30
       )
+
       if res.status_code == 200:
         return (
             res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
