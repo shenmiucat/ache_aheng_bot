@@ -393,7 +393,8 @@ def call_ai_brain(
   }
 
   for model_name in CANDIDATE_MODELS:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+    # 把 key= 直接帶在網址後面
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     try:
       res = session.post(
           url, headers=headers, json=payload, verify=False, timeout=12
