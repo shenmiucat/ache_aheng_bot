@@ -7,14 +7,14 @@ import sys
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler
+from google import genai
 import requests
 import urllib3
 
-# 強制 Log 即時輸出，不進行快取
+# 強制 Log 即時輸出
 if hasattr(sys.stdout, "reconfigure"):
   sys.stdout.reconfigure(line_buffering=True)
 
-# 強制設定整個環境時區為台北時間 (UTC+8)
 os.environ["TZ"] = "Asia/Taipei"
 if hasattr(time, "tzset"):
   time.tzset()
@@ -41,12 +41,10 @@ def run_dummy_server():
 
 # ================= 基礎設定 =================
 API_KEY = "AQ.Ab8RN6IxMlKNu-bJIuDPcswpYzvekp0Ve2OGwEzk-9wKI3qiQA"
-PROJECT_ID = "39741421025"  # 妳截圖中的 Google 專案編號
 TG_BOT_TOKEN_ACHE = "8832956921:AAElTmndvj0Alcl0usafLI2qNwTFNmcmlgA"
 TG_BOT_TOKEN_AHENG = "8856056737:AAG5QndXLI0J4ilsYPVjZUB6ysJAn49_30Y"
-MY_CHAT_ID = 8773051890  # 預設私聊綁定對象
+MY_CHAT_ID = 8773051890
 
-# Telegram 網址
 tg_base_ache = "https://api.telegram.org/bot" + TG_BOT_TOKEN_ACHE
 TG_SEND_URL_ACHE = tg_base_ache + "/sendMessage"
 TG_UPDATES_URL_ACHE = tg_base_ache + "/getUpdates"
@@ -55,13 +53,18 @@ tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
 TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 候選模型清單
+# 遵照妳原本的設定，完全不偷改
 CANDIDATE_MODELS = [
-    "gemini-3.5-flash",
-    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
 ]
 
 session = requests.Session()
+
+# 初始化官方 GenAI 客戶端
+try:
+  client = genai.Client(api_key=API_KEY)
+except Exception as e:
+  print(f"⚠️ 官方 SDK 初始化異常: {e}")
 
 
 # ================= 輔助文字清理與格式化 =================
@@ -333,7 +336,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 雙大腦呼叫 (對接 AQ. 金鑰 Vertex Express) =================
+# ================= 雙大腦呼叫 =================
 def call_ai_brain(
     character="ache",
     user_input=None,
@@ -384,32 +387,19 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  headers = {"Content-Type": "application/json"}
-  payload = {
-      "systemInstruction": {"parts": [{"text": system_prompt}]},
-      "contents": [{"parts": [{"text": prompt}]}],
-  }
-
   last_error = "所有模型皆無法回應"
   for model_name in CANDIDATE_MODELS:
-    # 專為 AQ. 金鑰打造的專用網址 (Vertex AI Express 通道)
-    url = f"https://aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/us-central1/publishers/google/models/{model_name}:generateContent?key={API_KEY}"
     try:
-      res = session.post(
-          url, headers=headers, json=payload, verify=False, timeout=30
+      response = client.models.generate_content(
+          model=model_name,
+          contents=prompt,
+          config={"system_instruction": system_prompt},
       )
-      if res.status_code == 200:
-        return (
-            res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        )
-      elif res.status_code == 429:
-        last_error = f"HTTP 429 (達到頻率限制)"
-        time.sleep(2)
-      else:
-        last_error = f"HTTP {res.status_code} - {res.text[:80]}"
-        print(f"⚠️ [{char_name}] {model_name} 失敗 ({res.status_code}): {res.text}")
+      if response and response.text:
+        return response.text.strip()
     except Exception as e:
-      last_error = f"連線異常: {e}"
+      last_error = f"SDK 呼叫失敗: {e}"
+      print(f"⚠️ [{char_name}] {model_name} 異常: {e}")
 
   return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
