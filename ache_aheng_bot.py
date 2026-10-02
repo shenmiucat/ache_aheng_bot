@@ -126,10 +126,6 @@ def sync_all_data_to_gist():
   """把當前的所有對話與記憶寫入 Gist 雲端備份"""
   if not GIST_ID or not GIST_TOKEN:
     return
-
-  # 關鍵：每次要存檔前，先去抓妳剛才在網頁上改好的最新內容！
-  load_all_data_from_gist()
-
   url = f"https://api.github.com/gists/{GIST_ID}"
   headers = {
       "Authorization": f"Bearer {GIST_TOKEN}",
@@ -270,6 +266,9 @@ def update_memory(raw_text):
 
 # ================= 對話歷史持久化 =================
 def load_chat_history(file_type="ache_private"):
+  # 每次讀取對話歷史時，先從 Gist 載入最新雲端資料（包含妳手動改的）
+  load_all_data_from_gist()
+
   if file_type == "group":
     target_file = GROUP_HISTORY_FILE
   elif file_type == "aheng_private":
