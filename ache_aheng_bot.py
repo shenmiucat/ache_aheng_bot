@@ -1,3 +1,26 @@
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+# 專門給 Render 通訊埠檢查用的虛擬網頁服務
+class DummyHandler(BaseHTTPRequestHandler):
+
+  def do_GET(self):
+    self.send_response(200)
+    self.end_headers()
+    self.wfile.write(b"Bot is running!")
+
+
+def run_dummy_server():
+  port = int(os.environ.get("PORT", 10000))
+  server = HTTPServer(("0.0.0.0", port), DummyHandler)
+  server.serve_forever()
+
+
+# 在背景啟動虛擬網頁，讓 Render 能抓到 Port
+threading.Thread(target=run_dummy_server, daemon=True).start()
+
 import datetime
 import json
 import os
