@@ -10,7 +10,7 @@ from http.server import SimpleHTTPRequestHandler
 import requests
 import urllib3
 
-# 強制 Log 即時輸出，解決 Render 紀錄延遲
+# 強制 Log 即時刷新
 if hasattr(sys.stdout, "reconfigure"):
   sys.stdout.reconfigure(line_buffering=True)
 
@@ -38,8 +38,10 @@ def run_dummy_server():
     print(f"⚠️ 虛擬 Port 伺服器啟動失敗: {e}")
 
 
-# ================= 基礎設定 =================
-API_KEY = "AQ.Ab8RN6IxMlKNu-bJIuDPcswpYzvekp0Ve2OGwEzk-9wKI3qiQA"
+# ================= 基礎設定 (從安全環境變數讀取) =================
+# 優先讀取 Render 環境變數裡的 GEMINI_API_KEY，避免上傳 GitHub 被自動封鎖
+API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+
 TG_BOT_TOKEN_ACHE = "8832956921:AAElTmndvj0Alcl0usafLI2qNwTFNmcmlgA"
 TG_BOT_TOKEN_AHENG = "8856056737:AAG5QndXLI0J4ilsYPVjZUB6ysJAn49_30Y"
 MY_CHAT_ID = 8773051890
@@ -52,7 +54,7 @@ tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
 TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 遵照指定模型
+# 遵照妳原本說的模型設定
 CANDIDATE_MODELS = [
     "gemini-3.5-flash-lite",
 ]
@@ -143,7 +145,7 @@ def update_memory(raw_text):
           changed = True
           print(f"🧠 [記憶新增] {entry}")
     elif line_str.startswith("🗑️ 忘記："):
-      item = line_str.replace("🗑️ 忘記：", "").strip()
+      item = line_str.replace("🗑️️ 忘記：", "").strip()
       before_len = len(notes)
       notes = [n for n in notes if item not in n]
       if len(notes) != before_len:
@@ -329,7 +331,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 直連 Vertex AI 通道 (專為 AQ. 金鑰設計) =================
+# ================= 呼叫 Gemini 大腦 (雙通道自動相容) =================
 def call_ai_brain(
     character="ache",
     user_input=None,
@@ -338,6 +340,10 @@ def call_ai_brain(
     extra_context="",
 ):
   global chat_history, aheng_history, group_history
+
+  if not API_KEY:
+    return f"⚠️ [{character}] 呼叫失敗：未設定 GEMINI_API_KEY 環境變數"
+
   weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
   now = datetime.datetime.now()
   current_time = f"{now.strftime('%Y-%m-%d %H:%M')} ({weekdays[now.weekday()]})"
@@ -380,33 +386,36 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  headers = {"Content-Type": "application/json"}
+  headers = {"Content-Type": "application/json", "x-goog-api-key": API_KEY}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
   }
 
-  last_error = "所有模型皆無法回應"
+  last_error = "所有連線嘗試皆失敗"
   for model_name in CANDIDATE_MODELS:
-    # 使用 Vertex AI 通用免專案號碼端點 (專門處理 AQ. Express 金鑰)
-    url = f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={API_KEY}"
-    try:
-      res = session.post(
-          url, headers=headers, json=payload, verify=False, timeout=30
-      )
-      if res.status_code == 200:
-        return (
-            res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    # 建立雙連線門口：先試傳統 AI Studio 端點，若遇 AQ. 金鑰格式則自動轉 Vertex 端點
+    urls = [
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}",
+        f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={API_KEY}",
+    ]
+
+    for url in urls:
+      try:
+        res = session.post(
+            url, headers=headers, json=payload, verify=False, timeout=30
         )
-      elif res.status_code == 429:
-        last_error = f"HTTP 429 (達到頻率限制)"
-        time.sleep(2)
-      else:
-        last_error = f"HTTP {res.status_code} - {res.text[:100]}"
-        print(f"⚠️ [{char_name}] {model_name} 失敗 ({res.status_code}): {res.text}")
-    except Exception as e:
-      last_error = f"連線異常: {e}"
-      print(f"⚠️ [{char_name}] {model_name} 異常: {e}")
+        if res.status_code == 200:
+          return (
+              res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+          )
+        elif res.status_code == 429:
+          last_error = "HTTP 429 (達到頻率限制)"
+          time.sleep(2)
+        else:
+          last_error = f"HTTP {res.status_code} - {res.text[:80]}"
+      except Exception as e:
+        last_error = f"連線異常: {e}"
 
   return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
