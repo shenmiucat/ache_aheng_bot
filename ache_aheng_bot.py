@@ -122,11 +122,14 @@ def load_all_data_from_gist():
   except Exception as e:
     print(f"⚠️ 從 Gist 載入記憶失敗: {e}")
 
-
 def sync_all_data_to_gist():
   """把當前的所有對話與記憶寫入 Gist 雲端備份"""
   if not GIST_ID or not GIST_TOKEN:
     return
+
+  # 關鍵：每次要存檔前，先去抓妳剛才在網頁上改好的最新內容！
+  load_all_data_from_gist()
+
   url = f"https://api.github.com/gists/{GIST_ID}"
   headers = {
       "Authorization": f"Bearer {GIST_TOKEN}",
@@ -160,7 +163,7 @@ def sync_all_data_to_gist():
       print("☁️ [Gist 更新成功] 記憶已即時備份至 GitHub！")
   except Exception as e:
     print(f"⚠️ 備份至 Gist 失敗: {e}")
-
+    
 
 # 初始化連線時同步雲端
 load_all_data_from_gist()
