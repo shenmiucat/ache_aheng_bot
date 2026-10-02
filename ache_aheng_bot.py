@@ -53,7 +53,7 @@ tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
 TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 遵照妳原本的設定，完全不偷改
+# 遵照妳原本的設定：gemini-3.5-flash-lite
 CANDIDATE_MODELS = [
     "gemini-3.5-flash-lite",
 ]
@@ -401,7 +401,7 @@ def call_ai_brain(
       last_error = f"SDK 呼叫失敗: {e}"
       print(f"⚠️ [{char_name}] {model_name} 異常: {e}")
 
-  return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
+  return f"⚠️️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
 
 # ================= 發送 TG 訊息 =================
