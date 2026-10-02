@@ -54,8 +54,7 @@ TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
 # 候選模型清單（按優先順序嘗試，加入不同配額池的 Lite）
 CANDIDATE_MODELS = [
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
 ]
 
 session = requests.Session()
