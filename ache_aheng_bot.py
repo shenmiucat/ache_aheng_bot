@@ -40,7 +40,7 @@ def run_dummy_server():
 
 
 # ================= 基礎設定 =================
-API_KEY = "AQ.Ab8RN6IcLO6vD0Jx-0oq77ivtI6vkOOuXhO3lTcVkG3js2WfXA"
+API_KEY = "AQ.Ab8RN6IxMlKNu-bJIuDPcswpYzvekp0Ve2OGwEzk-9wKI3qiQA"
 PROJECT_ID = "39741421025"  # 妳截圖中的 Google 專案編號
 TG_BOT_TOKEN_ACHE = "8832956921:AAElTmndvj0Alcl0usafLI2qNwTFNmcmlgA"
 TG_BOT_TOKEN_AHENG = "8856056737:AAG5QndXLI0J4ilsYPVjZUB6ysJAn49_30Y"
