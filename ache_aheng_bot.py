@@ -40,7 +40,7 @@ def run_dummy_server():
 
 
 # ================= 基礎設定 =================
-API_KEY = "AQ.Ab8RN6IcLO6vD0Jx-0oq77ivtI6vkOOuXhO3lTcVkG3js2WfXA"
+API_KEY = "AQ.Ab8RN6JUq9-qxTGgqP4-61ZJOxnKcrRZZpWV2eZU3ToQsSgi5Q"
 TG_BOT_TOKEN_ACHE = "8832956921:AAElTmndvj0Alcl0usafLI2qNwTFNmcmlgA"
 TG_BOT_TOKEN_AHENG = "8856056737:AAG5QndXLI0J4ilsYPVjZUB6ysJAn49_30Y"
 MY_CHAT_ID = 8773051890  # 預設私聊綁定對象
