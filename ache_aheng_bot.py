@@ -57,8 +57,8 @@ TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
 # 候選模型清單
 CANDIDATE_MODELS = [
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
-    "gemini-1.5-flash",
 ]
 
 session = requests.Session()
