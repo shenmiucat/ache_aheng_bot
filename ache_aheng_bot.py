@@ -38,12 +38,12 @@ def run_dummy_server():
     print(f"⚠️ 虛擬 Port 伺服器啟動失敗: {e}")
 
 
-# ================= 基礎設定 (從安全環境變數讀取) =================
-# 優先讀取 Render 環境變數裡的 GEMINI_API_KEY，避免上傳 GitHub 被自動封鎖
+# ================= 基礎設定 (全數改從安全環境變數讀取) =================
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-TG_BOT_TOKEN_ACHE = "8832956921:AAElTmndvj0Alcl0usafLI2qNwTFNmcmlgA"
-TG_BOT_TOKEN_AHENG = "8856056737:AAG5QndXLI0J4ilsYPVjZUB6ysJAn49_30Y"
+# 從 Render Environment 讀取 Telegram Token
+TG_BOT_TOKEN_ACHE = os.environ.get("TG_BOT_TOKEN_ACHE", "").strip()
+TG_BOT_TOKEN_AHENG = os.environ.get("TG_BOT_TOKEN_AHENG", "").strip()
 MY_CHAT_ID = 8773051890
 
 tg_base_ache = "https://api.telegram.org/bot" + TG_BOT_TOKEN_ACHE
@@ -54,7 +54,7 @@ tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
 TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 遵照妳原本說的模型設定
+# 遵照模型設定
 CANDIDATE_MODELS = [
     "gemini-3.5-flash-lite",
 ]
@@ -145,7 +145,7 @@ def update_memory(raw_text):
           changed = True
           print(f"🧠 [記憶新增] {entry}")
     elif line_str.startswith("🗑️ 忘記："):
-      item = line_str.replace("🗑️️ 忘記：", "").strip()
+      item = line_str.replace("🗑️ 忘記：", "").strip()
       before_len = len(notes)
       notes = [n for n in notes if item not in n]
       if len(notes) != before_len:
@@ -331,7 +331,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 呼叫 Gemini 大腦 (雙通道自動相容) =================
+# ================= 呼叫 Gemini 大腦 (全顯性除錯回覆) =================
 def call_ai_brain(
     character="ache",
     user_input=None,
@@ -341,8 +341,9 @@ def call_ai_brain(
 ):
   global chat_history, aheng_history, group_history
 
-  if not API_KEY:
-    return f"⚠️ [{character}] 呼叫失敗：未設定 GEMINI_API_KEY 環境變數"
+  current_key = os.environ.get("GEMINI_API_KEY", "").strip()
+  if not current_key:
+    return f"⚠️ [{character}] 呼叫失敗：Render 環境變數未讀取到 GEMINI_API_KEY"
 
   weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
   now = datetime.datetime.now()
@@ -386,7 +387,7 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  headers = {"Content-Type": "application/json", "x-goog-api-key": API_KEY}
+  headers = {"Content-Type": "application/json", "x-goog-api-key": current_key}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
@@ -394,10 +395,9 @@ def call_ai_brain(
 
   last_error = "所有連線嘗試皆失敗"
   for model_name in CANDIDATE_MODELS:
-    # 建立雙連線門口：先試傳統 AI Studio 端點，若遇 AQ. 金鑰格式則自動轉 Vertex 端點
     urls = [
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}",
-        f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={API_KEY}",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}",
+        f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={current_key}",
     ]
 
     for url in urls:
@@ -422,7 +422,12 @@ def call_ai_brain(
 
 # ================= 發送 TG 訊息 =================
 def send_tg_message(text, target_chat_id=MY_CHAT_ID, sender="ache"):
-  send_url = TG_SEND_URL_ACHE if sender == "ache" else TG_SEND_URL_AHENG
+  token = (
+      os.environ.get("TG_BOT_TOKEN_ACHE", "").strip()
+      if sender == "ache"
+      else os.environ.get("TG_BOT_TOKEN_AHENG", "").strip()
+  )
+  send_url = f"https://api.telegram.org/bot{token}/sendMessage"
   sender_name = "阿澈" if sender == "ache" else "阿珩"
   payload = {"chat_id": target_chat_id, "text": text, "parse_mode": "HTML"}
   try:
@@ -455,21 +460,16 @@ def random_tick_loop():
 # ================= 專屬監聽：阿珩私聊視窗 =================
 def aheng_listener_loop():
   last_update_id = 0
-  try:
-    res_init = session.get(
-        TG_UPDATES_URL_AHENG, params={"offset": -1}, verify=False, timeout=5
-    )
-    if res_init.status_code == 200 and res_init.json().get("result"):
-      last_update_id = res_init.json()["result"][-1]["update_id"]
-  except Exception:
-    pass
-
   while True:
+    token = os.environ.get("TG_BOT_TOKEN_AHENG", "").strip()
+    if not token:
+      time.sleep(5)
+      continue
+
+    updates_url = f"https://api.telegram.org/bot{token}/getUpdates"
     try:
       params = {"offset": last_update_id + 1, "timeout": 20}
-      res = session.get(
-          TG_UPDATES_URL_AHENG, params=params, verify=False, timeout=25
-      )
+      res = session.get(updates_url, params=params, verify=False, timeout=25)
       if res.status_code == 200:
         data = res.json()
         for update in data.get("result", []):
@@ -515,21 +515,16 @@ def main():
   threading.Thread(target=aheng_listener_loop, daemon=True).start()
 
   last_update_id = 0
-  try:
-    res_init = session.get(
-        TG_UPDATES_URL_ACHE, params={"offset": -1}, verify=False, timeout=5
-    )
-    if res_init.status_code == 200 and res_init.json().get("result"):
-      last_update_id = res_init.json()["result"][-1]["update_id"]
-  except Exception:
-    pass
-
   while True:
+    token = os.environ.get("TG_BOT_TOKEN_ACHE", "").strip()
+    if not token:
+      time.sleep(5)
+      continue
+
+    updates_url = f"https://api.telegram.org/bot{token}/getUpdates"
     try:
       params = {"offset": last_update_id + 1, "timeout": 20}
-      res = session.get(
-          TG_UPDATES_URL_ACHE, params=params, verify=False, timeout=25
-      )
+      res = session.get(updates_url, params=params, verify=False, timeout=25)
       if res.status_code == 200:
         data = res.json()
         for update in data.get("result", []):
