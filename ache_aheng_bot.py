@@ -25,8 +25,10 @@ import datetime
 import json
 import os
 import random
+import socketserver
 import threading
 import time
+from http.server import SimpleHTTPRequestHandler
 import requests
 import urllib3
 
@@ -36,6 +38,24 @@ if hasattr(time, "tzset"):
   time.tzset()
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+# ================= 讓 Render 順利偵測 Port 的虛擬伺服器 =================
+def run_dummy_server():
+  port = int(os.environ.get("PORT", 10000))
+
+  class QuietHandler(SimpleHTTPRequestHandler):
+
+    def log_message(self, format, *args):
+      pass  # 隱藏虛擬伺服器的請求 Log，保持介面乾淨
+
+  try:
+    with socketserver.TCPServer(("", port), QuietHandler) as httpd:
+      print(f"🌐 [Render 連線監聽] 已成功綁定 Port {port}")
+      httpd.serve_forever()
+  except Exception as e:
+    print(f"⚠️ 虛擬 Port 伺服器啟動失敗 (不影響機器人運作): {e}")
+
 
 # ================= 基礎設定 =================
 API_KEY = "AQ.Ab8RN6IcLO6vD0Jx-0oq77ivtI6vkOOuXhO3lTcVkG3js2WfXA"
@@ -52,9 +72,10 @@ tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
 TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 候選模型清單（按優先順序嘗試，加入不同配額池的 Lite）
+# 候選模型清單
 CANDIDATE_MODELS = [
     "gemini-3.5-flash-lite",
+    "gemini-2.5-flash-lite",
 ]
 
 session = requests.Session()
@@ -351,17 +372,14 @@ def call_ai_brain(
   )
   char_name = "阿澈" if character == "ache" else "阿珩"
 
-  # 讀取記憶與待辦（專屬於阿澈）
   notes = load_memory()
   mem_text = "\n".join([f"- {n}" for n in notes]) if notes else "（暫無特殊備忘）"
   memory_str = (
       f"\n【你目前腦子裡記住的事】:\n{mem_text}\n" if character == "ache" else ""
   )
   tasks_text = f"{get_ticktick_summary()}\n" if character == "ache" else ""
-  # 每次呼叫大腦時，在終端機印出角色當前看到的待辦
   print(f"\n📋 [{char_name} 讀取到的待辦清單]:\n{tasks_text.strip()}")
 
-  # 歷史紀錄組裝：不管是群聊還是私聊，都把「該角色的私聊」與「公共群聊」合併並按時間排序
   target_private = chat_history if character == "ache" else aheng_history
   tagged_private = [(f"{role}(私聊)", text) for role, text in target_private]
   tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
@@ -386,18 +404,19 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  headers = {"Content-Type": "application/json", "x-goog-api-key": API_KEY}
+  # 取消 Header 帶 Key，全面改為 URL query parameter
+  headers = {"Content-Type": "application/json"}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
       "contents": [{"parts": [{"text": prompt}]}],
   }
 
   for model_name in CANDIDATE_MODELS:
-    # 把 key= 直接帶在網址後面
+    # 關鍵修正：將 API Key 帶在 URL 參數，並將 timeout 增加至 30 秒
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     try:
       res = session.post(
-          url, headers=headers, json=payload, verify=False, timeout=12
+          url, headers=headers, json=payload, verify=False, timeout=30
       )
       if res.status_code == 200:
         return (
@@ -410,7 +429,8 @@ def call_ai_brain(
         time.sleep(2)
       else:
         print(
-            f"⚠️ [{char_name}] 模型 {model_name} 呼叫失敗 ({res.status_code})，切換備援..."
+            f"⚠️ [{char_name}] 模型 {model_name} 呼叫失敗"
+            f" ({res.status_code}): {res.text}"
         )
     except Exception as e:
       print(f"⚠️ [{char_name}] 模型 {model_name} 連線異常: {e}，切換備援...")
@@ -445,17 +465,15 @@ def random_tick_loop():
         " 分鐘) 後主動發話..."
     )
     time.sleep(wait_seconds)
-    now_hour = datetime.datetime.now().hour
-    if 6 <= now_hour < 22:
+    now_hour = datetime.datetime.now()
+    if 6 <= now_hour.hour < 22:
       msg = call_ai_brain("ache", is_auto=True, is_group=False)
-      # 只要阿澈回覆 [SILENCE] 或空白，就默默略過不發訊息
       if "[SILENCE]" in msg or not msg.strip():
         continue
 
       update_memory(msg)
       formatted_msg = format_private_msg(msg, char_name="阿澈")
 
-      # 歷史紀錄保留乾淨純文本（不帶 HTML 標籤）
       pure_text = msg.split("💭")[0].replace("💬", "").strip()
       save_chat_history("阿澈", pure_text, file_type="ache_private")
 
@@ -466,6 +484,16 @@ def random_tick_loop():
 # ================= 專屬監聽：阿珩私聊視窗 =================
 def aheng_listener_loop():
   last_update_id = 0
+  # 強制刷新阿珩的訊息起點
+  try:
+    res_init = session.get(
+        TG_UPDATES_URL_AHENG, params={"offset": -1}, verify=False, timeout=5
+    )
+    if res_init.status_code == 200 and res_init.json().get("result"):
+      last_update_id = res_init.json()["result"][-1]["update_id"]
+  except Exception:
+    pass
+
   while True:
     try:
       params = {"offset": last_update_id + 1, "timeout": 20}
@@ -477,9 +505,7 @@ def aheng_listener_loop():
         for update in data.get("result", []):
           last_update_id = update["update_id"]
           msg_obj = update.get("message")
-          if not msg_obj:
-            continue
-          if msg_obj.get("from", {}).get("is_bot", False):
+          if not msg_obj or msg_obj.get("from", {}).get("is_bot", False):
             continue
 
           chat_obj = msg_obj.get("chat", {})
@@ -497,7 +523,6 @@ def aheng_listener_loop():
             reply = call_ai_brain(
                 "aheng", user_input=user_text, is_auto=False, is_group=False
             )
-            # 阿珩私聊加上黑條防雷遮罩！
             formatted_reply = format_private_msg(reply, char_name="阿珩")
 
             pure_text = (
@@ -519,15 +544,27 @@ def aheng_listener_loop():
 
 # ================= 主迴圈：阿澈私聊 & 群組相聲邏輯 =================
 def main():
+  # 啟動虛擬 Web 伺服器供 Render 健康檢查（防止服務一直被判定死亡而重新啟動）
+  threading.Thread(target=run_dummy_server, daemon=True).start()
+
   print("\n雙人模式已啟動（阿澈 + 阿珩待命中，皆支援私聊與群聊）...")
-  # 後台顯示待辦
   print(f"{get_ticktick_summary()}\n")
-  print("現在可以打開手機 Telegram 互動了！(按 Ctrl+C 結束)\n")
 
   threading.Thread(target=random_tick_loop, daemon=True).start()
   threading.Thread(target=aheng_listener_loop, daemon=True).start()
 
   last_update_id = 0
+  # 強制刷新阿澈 Telegram 的訊息起點
+  try:
+    res_init = session.get(
+        TG_UPDATES_URL_ACHE, params={"offset": -1}, verify=False, timeout=5
+    )
+    if res_init.status_code == 200 and res_init.json().get("result"):
+      last_update_id = res_init.json()["result"][-1]["update_id"]
+      print(f"🔄 阿澈訊息起點已重設，目前 Update ID: {last_update_id}")
+  except Exception as e:
+    print(f"阿澈重設失敗: {e}")
+
   while True:
     try:
       params = {"offset": last_update_id + 1, "timeout": 20}
@@ -537,13 +574,10 @@ def main():
       if res.status_code == 200:
         data = res.json()
         for update in data.get("result", []):
-          up_id = update["update_id"]  # 抓出這次的 update_id
+          up_id = update["update_id"]
           last_update_id = update["update_id"]
           msg_obj = update.get("message")
-          if not msg_obj:
-            continue
-
-          if msg_obj.get("from", {}).get("is_bot", False):
+          if not msg_obj or msg_obj.get("from", {}).get("is_bot", False):
             continue
 
           chat_obj = msg_obj.get("chat", {})
@@ -596,7 +630,6 @@ def main():
                 or user_text.startswith("澈")
             )
 
-            # 隨機或指定第一棒
             if is_tag_aheng and not is_tag_ache:
               first_speaker = "aheng"
             elif is_tag_ache and not is_tag_aheng:
@@ -609,7 +642,6 @@ def main():
             reply_first = call_ai_brain(
                 first_speaker, user_input=user_text, is_group=True
             )
-            # 群聊徹底切除內心話，只發明面言論
             clean_first = format_group_msg(reply_first)
 
             save_chat_history(first_name, clean_first, file_type="group")
@@ -621,7 +653,6 @@ def main():
             last_speaker = first_speaker
             last_reply = clean_first
 
-            # 接話吐槽迴圈（改為 1 輪，節約配額避免連環爆發）
             for round_idx in range(1):
               delay = random.randint(3, 5)
               time.sleep(delay)
