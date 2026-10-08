@@ -1,14 +1,15 @@
-import os
-import sys
-import time
-import json
-import random
 import datetime
+import json
+import os
+import random
+import socketserver
+import sys
+import threading
+import time
+from http.server import SimpleHTTPRequestHandler
+
 import requests
 import urllib3
-import socketserver
-import threading
-from http.server import SimpleHTTPRequestHandler
 
 # 強制 Log 即時刷新
 if hasattr(sys.stdout, "reconfigure"):
@@ -63,23 +64,19 @@ CANDIDATE_MODELS = [
 
 session = requests.Session()
 
-# ================= GitHub Gist 雲端記憶同步機制 =================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HISTORY_FILE_ACHE = os.path.join(BASE_DIR, "chat_history.json")
-HISTORY_FILE_AHENG = os.path.join(BASE_DIR, "aheng_history.json")
-GROUP_HISTORY_FILE = os.path.join(BASE_DIR, "group_history.json")
-MEMORY_FILE = os.path.join(BASE_DIR, "memory.json")
-
+# ================= 全局記憶體資料結構 =================
+notes = []
 chat_history = []
 aheng_history = []
 group_history = []
 
 
-def load_all_data_from_gist():
-  """開機時從 Gist 下載所有紀錄檔並載入到記憶體與本地檔案"""
-  global chat_history, aheng_history, group_history
+# ================= GitHub Gist 直連同步機制 =================
+def fetch_gist_data():
+  """直接從 Gist 抓取最新資料並更新記憶體，若失敗則維持現有記憶體"""
+  global notes, chat_history, aheng_history, group_history
   if not GIST_ID or not GIST_TOKEN:
-    print("⚠️ 未設定 GIST_ID 或 GIST_TOKEN，維持本地檔案機制。")
+    print("⚠️ 未設定 GIST_ID 或 GIST_TOKEN，使用純記憶體模式。")
     return
   url = f"https://api.github.com/gists/{GIST_ID}"
   headers = {
@@ -90,7 +87,6 @@ def load_all_data_from_gist():
     res = session.get(url, headers=headers, timeout=10)
     if res.status_code == 200:
       files = res.json().get("files", {})
-
       if "bot_data.json" in files:
         raw_content = files["bot_data.json"].get("content", "{}")
         all_data = json.loads(raw_content)
@@ -99,24 +95,12 @@ def load_all_data_from_gist():
         chat_history = all_data.get("ache_private", [])
         aheng_history = all_data.get("aheng_private", [])
         group_history = all_data.get("group", [])
-
-        # 寫回本機 JSON 檔
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-          json.dump({"notes": notes}, f, ensure_ascii=False, indent=2)
-        with open(HISTORY_FILE_ACHE, "w", encoding="utf-8") as f:
-          json.dump(chat_history, f, ensure_ascii=False, indent=2)
-        with open(HISTORY_FILE_AHENG, "w", encoding="utf-8") as f:
-          json.dump(aheng_history, f, ensure_ascii=False, indent=2)
-        with open(GROUP_HISTORY_FILE, "w", encoding="utf-8") as f:
-          json.dump(group_history, f, ensure_ascii=False, indent=2)
-
-        print("☁️ [Gist 同步成功] 歷史對話與備忘記憶已從雲端載入！")
   except Exception as e:
-    print(f"⚠️ 從 Gist 載入記憶失敗: {e}")
+    print(f"⚠️ 從 Gist 讀取資料失敗: {e}")
 
 
-def sync_all_data_to_gist():
-  """將當前記憶體中的資料即時寫入 Gist 雲端"""
+def push_gist_data():
+  """將目前記憶體中的最新資料同步寫入 Gist"""
   if not GIST_ID or not GIST_TOKEN:
     return
   url = f"https://api.github.com/gists/{GIST_ID}"
@@ -124,8 +108,6 @@ def sync_all_data_to_gist():
       "Authorization": f"Bearer {GIST_TOKEN}",
       "Accept": "application/vnd.github+json",
   }
-
-  notes = load_memory()
 
   payload = {
       "files": {
@@ -146,15 +128,15 @@ def sync_all_data_to_gist():
   try:
     res = session.patch(url, headers=headers, json=payload, timeout=10)
     if res.status_code == 200:
-      print("☁️ [Gist 更新成功] 記憶已即時備份至 GitHub！")
+      print("☁️ [Gist 同步成功] 最新記憶與歷史已更新至 GitHub！")
     else:
       print(f"⚠️ 寫入 Gist 失敗，HTTP 狀態碼: {res.status_code}")
   except Exception as e:
     print(f"⚠️ 備份至 Gist 失敗: {e}")
 
 
-# 初始化連線時同步雲端
-load_all_data_from_gist()
+# 初始化時先從 Gist 拉取一次資料
+fetch_gist_data()
 
 
 # ================= 輔助文字清理與格式化 =================
@@ -163,7 +145,8 @@ def format_private_msg(raw_text, char_name="阿澈"):
       line
       for line in raw_text.split("\n")
       if not line.strip().startswith("📝 記住：")
-      and not line.strip().startswith("🗑️️ 忘記：")
+      and not line.strip().startswith("🗑 忘記：")
+      and not line.strip().startswith("🗑️ 忘記：")
   ])
 
   if "💭" in clean:
@@ -205,24 +188,17 @@ def format_group_msg(raw_text):
   )
 
 
-# ================= 記憶檔案管理 =================
+# ================= 記憶與備忘管理 (直連 Gist) =================
 def load_memory():
-  base_dir = os.path.dirname(os.path.abspath(__file__))
-  mem_path = os.path.join(base_dir, "memory.json")
-  if not os.path.exists(mem_path):
-    return []
-  try:
-    with open(mem_path, "r", encoding="utf-8") as f:
-      data = json.load(f)
-      return data.get("notes", [])
-  except Exception:
-    return []
+  """直接從 Gist 讀取最新的備忘清單"""
+  fetch_gist_data()
+  return notes
 
 
 def update_memory(raw_text):
-  base_dir = os.path.dirname(os.path.abspath(__file__))
-  mem_path = os.path.join(base_dir, "memory.json")
-  notes = load_memory()
+  """依據指令更新備忘並同步回 Gist"""
+  global notes
+  fetch_gist_data()  # 更新前先抓取最新狀況，避免複寫
   changed = False
 
   weekdays = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
@@ -239,8 +215,10 @@ def update_memory(raw_text):
           notes.append(entry)
           changed = True
           print(f"🧠 [記憶新增] {entry}")
-    elif line_str.startswith("🗑️ 忘記："):
-      item = line_str.replace("🗑 忘記：", "").strip()
+    elif line_str.startswith("🗑️ 忘記：") or line_str.startswith("🗑 忘記："):
+      item = (
+          line_str.replace("🗑️ 忘記：", "").replace("🗑 忘記：", "").strip()
+      )
       before_len = len(notes)
       notes = [n for n in notes if item not in n]
       if len(notes) != before_len:
@@ -248,39 +226,28 @@ def update_memory(raw_text):
         print(f"🧹 [記憶清除] {item}")
 
   if changed:
-    try:
-      with open(mem_path, "w", encoding="utf-8") as f:
-        json.dump({"notes": notes}, f, ensure_ascii=False, indent=2)
-      sync_all_data_to_gist()
-    except Exception as e:
-      print(f"❌ 記憶存檔失敗: {e}")
+    push_gist_data()
 
 
-# ================= 對話歷史持久化 =================
+# ================= 對話歷史持久化 (直連 Gist) =================
 def save_chat_history(role, text, file_type="ache_private"):
+  """將訊息存入記憶體並直接同步更新至 Gist"""
   global chat_history, aheng_history, group_history
+
+  fetch_gist_data()  # 寫入前先更新最新紀錄，避免多端覆寫
+
   weekdays = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
   now = datetime.datetime.now()
   time_tag = f"[{now.strftime('%Y-%m-%d')} {weekdays[now.weekday()]} {now.strftime('%H:%M')}]"
 
   if file_type == "group":
-    target_list = group_history
-    target_file = GROUP_HISTORY_FILE
+    group_history.append((role, f"{time_tag} {text}"))
   elif file_type == "aheng_private":
-    target_list = aheng_history
-    target_file = HISTORY_FILE_AHENG
+    aheng_history.append((role, f"{time_tag} {text}"))
   else:
-    target_list = chat_history
-    target_file = HISTORY_FILE_ACHE
+    chat_history.append((role, f"{time_tag} {text}"))
 
-  target_list.append((role, f"{time_tag} {text}"))
-
-  try:
-    with open(target_file, "w", encoding="utf-8") as f:
-      json.dump(target_list, f, ensure_ascii=False, indent=2)
-    sync_all_data_to_gist()
-  except Exception as e:
-    print(f"❌ 對話歷史存檔失敗: {e}")
+  push_gist_data()
 
 
 # ================= 載入人設 =================
@@ -408,7 +375,8 @@ def call_ai_brain(
     is_group=False,
     extra_context="",
 ):
-  global chat_history, aheng_history, group_history
+  # 呼叫大腦時先從 Gist 抓取最新紀錄
+  fetch_gist_data()
 
   current_key = os.environ.get("GEMINI_API_KEY", "").strip()
   if not current_key:
@@ -425,7 +393,6 @@ def call_ai_brain(
   )
   char_name = "阿澈" if character == "ache" else "阿珩"
 
-  notes = load_memory()
   mem_text = "\n".join([f"- {n}" for n in notes]) if notes else "（暫無特殊備忘）"
   memory_str = (
       f"\n【你目前腦子裡記住的事】:\n{mem_text}\n" if character == "ache" else ""
