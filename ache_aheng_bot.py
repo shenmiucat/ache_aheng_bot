@@ -547,25 +547,28 @@ def aheng_listener_loop():
           chat_id = chat_obj.get("id")
           chat_type = chat_obj.get("type", "private")
 
-          user_text = msg_obj.get("text", "").strip()
+          raw_text = msg_obj.get("text", "").strip()
+          caption_text = msg_obj.get("caption", "").strip()
           photo_list = msg_obj.get("photo")
           image_b64 = None
 
           if photo_list:
             file_id = photo_list[-1]["file_id"]
             image_b64 = get_tg_file_b64(file_id, token)
-            user_text = (
-                msg_obj.get("caption", "").strip()
-                or "[傳送了一張圖片] 請看這張圖片並回覆我"
+            user_text = caption_text or "請看這張圖片並回覆我"
+            history_text = (
+                f"[傳送圖片] {caption_text}"
+                if caption_text
+                else "[傳送了一張圖片]"
             )
+          else:
+            user_text = raw_text
+            history_text = raw_text
 
           if not user_text or user_text == "/start":
             continue
 
           if chat_type == "private" and chat_id == MY_CHAT_ID:
-            history_text = (
-                f"[傳送圖片] {user_text}" if photo_list else user_text
-            )
             save_chat_history("阿渺", history_text, file_type="aheng_private")
             reply = call_ai_brain(
                 "aheng",
@@ -622,26 +625,29 @@ def main():
           chat_type = chat_obj.get("type", "private")
           is_group = chat_type in ["group", "supergroup"]
 
-          user_text = msg_obj.get("text", "").strip()
+          raw_text = msg_obj.get("text", "").strip()
+          caption_text = msg_obj.get("caption", "").strip()
           photo_list = msg_obj.get("photo")
           image_b64 = None
 
           if photo_list:
             file_id = photo_list[-1]["file_id"]
             image_b64 = get_tg_file_b64(file_id, token)
-            user_text = (
-                msg_obj.get("caption", "").strip()
-                or "[傳送了一張圖片] 請看這張圖片並回覆我"
+            user_text = caption_text or "請看這張圖片並回覆我"
+            history_text = (
+                f"[傳送圖片] {caption_text}"
+                if caption_text
+                else "[傳送了一張圖片]"
             )
+          else:
+            user_text = raw_text
+            history_text = raw_text
 
           if not user_text or user_text == "/start":
             continue
 
           # 私聊阿澈
           if not is_group and chat_id == MY_CHAT_ID:
-            history_text = (
-                f"[傳送圖片] {user_text}" if photo_list else user_text
-            )
             save_chat_history("阿渺", history_text, file_type="ache_private")
             reply = call_ai_brain(
                 "ache",
@@ -666,9 +672,6 @@ def main():
 
           # 群組聊天
           if is_group:
-            history_text = (
-                f"[傳送圖片] {user_text}" if photo_list else user_text
-            )
             save_chat_history("阿渺", history_text, file_type="group")
             is_tag_aheng = (
                 "@aheng" in user_text.lower()
@@ -738,4 +741,4 @@ def main():
 
 
 if __name__ == "__main__":
-  main()            
+  main()
