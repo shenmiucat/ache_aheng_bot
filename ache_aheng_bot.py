@@ -1,3 +1,4 @@
+import base64
 import datetime
 import json
 import os
@@ -188,6 +189,28 @@ def format_group_msg(raw_text):
   )
 
 
+# ================= Telegram 圖片下載與 Base64 轉換 =================
+def get_tg_file_b64(file_id, token):
+  """抓取 Telegram 圖片並轉為 Base64 字串"""
+  try:
+    res = session.get(
+        f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}",
+        timeout=5,
+    ).json()
+    if not res.get("ok"):
+      return None
+    file_path = res["result"]["file_path"]
+
+    img_res = session.get(
+        f"https://api.telegram.org/file/bot{token}/{file_path}", timeout=10
+    )
+    if img_res.status_code == 200:
+      return base64.b64encode(img_res.content).decode("utf-8")
+  except Exception as e:
+    print(f"⚠️ 下載圖片失敗: {e}")
+  return None
+
+
 # ================= 記憶與備忘管理 (直連 Gist) =================
 def load_memory():
   """直接從 Gist 讀取最新的備忘清單"""
@@ -374,6 +397,7 @@ def call_ai_brain(
     is_auto=False,
     is_group=False,
     extra_context="",
+    image_b64=None,
 ):
   # 呼叫大腦時先從 Gist 抓取最新紀錄
   fetch_gist_data()
@@ -423,10 +447,15 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
+  # 打包 Parts（若有圖片則一併加入）
+  parts = [{"text": prompt}]
+  if image_b64:
+    parts.append({"inlineData": {"mimeType": "image/jpeg", "data": image_b64}})
+
   headers = {"Content-Type": "application/json", "x-goog-api-key": current_key}
   payload = {
       "systemInstruction": {"parts": [{"text": system_prompt}]},
-      "contents": [{"parts": [{"text": prompt}]}],
+      "contents": [{"parts": parts}],
   }
 
   last_error = "所有連線嘗試皆失敗"
@@ -517,15 +546,33 @@ def aheng_listener_loop():
           chat_obj = msg_obj.get("chat", {})
           chat_id = chat_obj.get("id")
           chat_type = chat_obj.get("type", "private")
+
           user_text = msg_obj.get("text", "").strip()
+          photo_list = msg_obj.get("photo")
+          image_b64 = None
+
+          if photo_list:
+            file_id = photo_list[-1]["file_id"]
+            image_b64 = get_tg_file_b64(file_id, token)
+            user_text = (
+                msg_obj.get("caption", "").strip()
+                or "[傳送了一張圖片] 請看這張圖片並回覆我"
+            )
 
           if not user_text or user_text == "/start":
             continue
 
           if chat_type == "private" and chat_id == MY_CHAT_ID:
-            save_chat_history("阿渺", user_text, file_type="aheng_private")
+            history_text = (
+                f"[傳送圖片] {user_text}" if photo_list else user_text
+            )
+            save_chat_history("阿渺", history_text, file_type="aheng_private")
             reply = call_ai_brain(
-                "aheng", user_input=user_text, is_auto=False, is_group=False
+                "aheng",
+                user_input=user_text,
+                is_auto=False,
+                is_group=False,
+                image_b64=image_b64,
             )
             formatted_reply = format_private_msg(reply, char_name="阿珩")
             pure_text = (
@@ -574,16 +621,34 @@ def main():
           chat_id = chat_obj.get("id")
           chat_type = chat_obj.get("type", "private")
           is_group = chat_type in ["group", "supergroup"]
+
           user_text = msg_obj.get("text", "").strip()
+          photo_list = msg_obj.get("photo")
+          image_b64 = None
+
+          if photo_list:
+            file_id = photo_list[-1]["file_id"]
+            image_b64 = get_tg_file_b64(file_id, token)
+            user_text = (
+                msg_obj.get("caption", "").strip()
+                or "[傳送了一張圖片] 請看這張圖片並回覆我"
+            )
 
           if not user_text or user_text == "/start":
             continue
 
           # 私聊阿澈
           if not is_group and chat_id == MY_CHAT_ID:
-            save_chat_history("阿渺", user_text, file_type="ache_private")
+            history_text = (
+                f"[傳送圖片] {user_text}" if photo_list else user_text
+            )
+            save_chat_history("阿渺", history_text, file_type="ache_private")
             reply = call_ai_brain(
-                "ache", user_input=user_text, is_auto=False, is_group=False
+                "ache",
+                user_input=user_text,
+                is_auto=False,
+                is_group=False,
+                image_b64=image_b64,
             )
             update_memory(reply)
             formatted_reply = format_private_msg(reply, char_name="阿澈")
@@ -601,7 +666,10 @@ def main():
 
           # 群組聊天
           if is_group:
-            save_chat_history("阿渺", user_text, file_type="group")
+            history_text = (
+                f"[傳送圖片] {user_text}" if photo_list else user_text
+            )
+            save_chat_history("阿渺", history_text, file_type="group")
             is_tag_aheng = (
                 "@aheng" in user_text.lower()
                 or user_text.startswith("阿珩")
@@ -622,7 +690,10 @@ def main():
 
             first_name = "阿珩" if first_speaker == "aheng" else "阿澈"
             reply_first = call_ai_brain(
-                first_speaker, user_input=user_text, is_group=True
+                first_speaker,
+                user_input=user_text,
+                is_group=True,
+                image_b64=image_b64,
             )
             clean_first = format_group_msg(reply_first)
 
@@ -667,4 +738,4 @@ def main():
 
 
 if __name__ == "__main__":
-  main()
+  main()            
