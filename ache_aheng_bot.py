@@ -525,7 +525,7 @@ def send_tg_message(text, target_chat_id=MY_CHAT_ID, sender="ache"):
 # ================= 背景隨機主動發話任務 =================
 def random_tick_loop():
   while True:
-    wait_seconds = random.randint(3600, 7200)
+    wait_seconds = random.randint(5400, 10800)
     time.sleep(wait_seconds)
     now = datetime.datetime.now()
 
