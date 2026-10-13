@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import random
+import re
 import socketserver
 import sys
 import threading
@@ -138,6 +139,20 @@ def push_gist_data():
 
 # 初始化時先從 Gist 拉取一次資料
 fetch_gist_data()
+
+
+# ================= 時間 Parsing 輔助函數 =================
+def parse_msg_time(text):
+  """精確解析紀錄字串中的時間戳記 [YYYY-MM-DD ... HH:MM]"""
+  match = re.search(r"\[(\d{4}-\d{2}-\d{2})\s+[^\]]+\s+(\d{2}:\d{2})\]", text)
+  if match:
+    try:
+      date_str = f"{match.group(1)} {match.group(2)}"
+      return datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+    except Exception:
+      pass
+  # 無法解析或無時間戳的舊資料，回傳極早時間（確保排序被放在最前面並被後續截取過濾）
+  return datetime.datetime.min
 
 
 # ================= 輔助文字清理與格式化 =================
@@ -428,10 +443,13 @@ def call_ai_brain(
   tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
 
   combined_history = tagged_private + tagged_group
-  combined_history.sort(key=lambda item: item[1])
+
+  # 修正重點：使用解析後的『真實時間』排序，絕不使用預設字串 sort()，並只取最新 40 條
+  combined_history.sort(key=lambda item: parse_msg_time(item[1]))
+  recent_history = combined_history[-40:]
 
   history_str = "\n".join(
-      [f"{role}: {text}" for role, text in combined_history[-500:]]
+      [f"{role}: {text}" for role, text in recent_history]
   )
 
   if is_auto:
@@ -509,16 +527,37 @@ def random_tick_loop():
   while True:
     wait_seconds = random.randint(3600, 7200)
     time.sleep(wait_seconds)
-    now_hour = datetime.datetime.now()
-    if 6 <= now_hour.hour < 22:
+    now = datetime.datetime.now()
+
+    if 6 <= now.hour < 22:
+      fetch_gist_data()
+      # 檢查最後一條對話時間，若 30 分鐘內才剛聊過則直接 skip 不打擾
+      tagged_private = [(f"{role}(私聊)", text) for role, text in chat_history]
+      tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
+      all_combined = tagged_private + tagged_group
+      all_combined.sort(key=lambda item: parse_msg_time(item[1]))
+
+      if all_combined:
+        last_time = parse_msg_time(all_combined[-1][1])
+        if last_time != datetime.datetime.min:
+          diff_minutes = (now - last_time).total_seconds() / 60
+          if diff_minutes < 30:
+            continue  # 剛聊完不到 30 分鐘，暫不打擾
+
       msg = call_ai_brain("ache", is_auto=True, is_group=False)
       if "[SILENCE]" in msg or not msg.strip() or "⚠️" in msg:
         continue
 
       update_memory(msg)
       formatted_msg = format_private_msg(msg, char_name="阿澈")
-      pure_text = msg.split("💭")[0].replace("💬", "").strip()
-      save_chat_history("阿澈", pure_text, file_type="ache_private")
+      # 保留完整對話與內心想法，存入歷史紀錄
+      clean_history_text = (
+          msg.replace("💬", "")
+          .replace("[阿澈]", "")
+          .replace("[阿珩]", "")
+          .strip()
+      )
+      save_chat_history("阿澈", clean_history_text, file_type="ache_private")
       send_tg_message(formatted_msg, target_chat_id=MY_CHAT_ID, sender="ache")
 
 
@@ -578,13 +617,16 @@ def aheng_listener_loop():
                 image_b64=image_b64,
             )
             formatted_reply = format_private_msg(reply, char_name="阿珩")
-            pure_text = (
-                reply.split("💭")[0]
-                .replace("💬", "")
+            # 保留完整對話與內心想法，存入歷史紀錄
+            clean_history_text = (
+                reply.replace("💬", "")
+                .replace("[阿澈]", "")
                 .replace("[阿珩]", "")
                 .strip()
             )
-            save_chat_history("阿珩", pure_text, file_type="aheng_private")
+            save_chat_history(
+                "阿珩", clean_history_text, file_type="aheng_private"
+            )
             send_tg_message(
                 formatted_reply, target_chat_id=chat_id, sender="aheng"
             )
@@ -658,13 +700,16 @@ def main():
             )
             update_memory(reply)
             formatted_reply = format_private_msg(reply, char_name="阿澈")
-            pure_text = (
-                reply.split("💭")[0]
-                .replace("💬", "")
+            # 保留完整對話與內心想法，存入歷史紀錄
+            clean_history_text = (
+                reply.replace("💬", "")
                 .replace("[阿澈]", "")
+                .replace("[阿珩]", "")
                 .strip()
             )
-            save_chat_history("阿澈", pure_text, file_type="ache_private")
+            save_chat_history(
+                "阿澈", clean_history_text, file_type="ache_private"
+            )
             send_tg_message(
                 formatted_reply, target_chat_id=chat_id, sender="ache"
             )
