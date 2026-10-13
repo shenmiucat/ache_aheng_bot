@@ -444,9 +444,9 @@ def call_ai_brain(
 
   combined_history = tagged_private + tagged_group
 
-  # 修正重點：使用解析後的『真實時間』排序，絕不使用預設字串 sort()，並只取最新 40 條
+  # 修正重點：使用解析後的『真實時間』排序，絕不使用預設字串 sort()，並只取最新 100 條
   combined_history.sort(key=lambda item: parse_msg_time(item[1]))
-  recent_history = combined_history[-40:]
+  recent_history = combined_history[-100:]
 
   history_str = "\n".join(
       [f"{role}: {text}" for role, text in recent_history]
