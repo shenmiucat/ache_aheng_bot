@@ -485,7 +485,7 @@ def call_ai_brain(
       try:
         res = session.post(
             url, headers=headers, json=payload, verify=False, timeout=30
-        ）
+        )
         if res.status_code == 200:
           raw_reply = (
             res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
