@@ -387,7 +387,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 呼叫 Gemini 大腦 (回傳 reply 與成功的 model_name) =================
+# ================= 呼叫 Gemini 大腦 =================
 def call_ai_brain(
     character="ache",
     user_input=None,
@@ -400,10 +400,7 @@ def call_ai_brain(
 
   current_key = os.environ.get("GEMINI_API_KEY", "").strip()
   if not current_key:
-    return (
-        f"⚠️ [{character}] 呼叫失敗：Render 環境變數未讀取到 GEMINI_API_KEY",
-        "unknown",
-    )
+    return f"⚠️ [{character}] 呼叫失敗：Render 環境變數未讀取到 GEMINI_API_KEY"
 
   weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
   now = datetime.datetime.now()
@@ -470,10 +467,11 @@ def call_ai_brain(
             url, headers=headers, json=payload, verify=False, timeout=30
         )
         if res.status_code == 200:
-          raw_text = (
+          raw_reply = (
               res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
           )
-          return raw_text, model_name
+          # 原汁原味的回傳，僅在最後面附帶 Telegram 標準斜體 <i> 標籤
+          return f"{raw_reply}\n<i>🤖 {model_name}</i>"
         elif res.status_code == 429:
           last_error = "HTTP 429 (達到頻率限制)"
           time.sleep(2)
@@ -482,7 +480,7 @@ def call_ai_brain(
       except Exception as e:
         last_error = f"連線異常: {e}"
 
-  return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}", "unknown"
+  return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
 
 # ================= 發送 TG 訊息 =================
@@ -525,16 +523,12 @@ def random_tick_loop():
           if diff_minutes < 30:
             continue
 
-      msg, used_model = call_ai_brain("ache", is_auto=True, is_group=False)
+      msg = call_ai_brain("ache", is_auto=True, is_group=False)
       if "[SILENCE]" in msg or not msg.strip() or "⚠️" in msg:
         continue
 
       update_memory(msg)
       formatted_msg = format_private_msg(msg, char_name="阿澈")
-      formatted_msg_with_model = (
-          f"{formatted_msg}\n<small>🤖 {used_model}</small>"
-      )
-
       clean_history_text = (
           msg.replace("💬", "")
           .replace("[阿澈]", "")
@@ -542,9 +536,7 @@ def random_tick_loop():
           .strip()
       )
       save_chat_history("阿澈", clean_history_text, file_type="ache_private")
-      send_tg_message(
-          formatted_msg_with_model, target_chat_id=MY_CHAT_ID, sender="ache"
-      )
+      send_tg_message(formatted_msg, target_chat_id=MY_CHAT_ID, sender="ache")
 
 
 # ================= 專屬監聽：阿珩私聊視窗 =================
@@ -595,7 +587,7 @@ def aheng_listener_loop():
 
           if chat_type == "private" and chat_id == MY_CHAT_ID:
             save_chat_history("阿渺", history_text, file_type="aheng_private")
-            reply, used_model = call_ai_brain(
+            reply = call_ai_brain(
                 "aheng",
                 user_input=user_text,
                 is_auto=False,
@@ -603,10 +595,6 @@ def aheng_listener_loop():
                 image_b64=image_b64,
             )
             formatted_reply = format_private_msg(reply, char_name="阿珩")
-            formatted_reply_with_model = (
-                f"{formatted_reply}\n<small>🤖 {used_model}</small>"
-            )
-
             clean_history_text = (
                 reply.replace("💬", "")
                 .replace("[阿澈]", "")
@@ -617,9 +605,7 @@ def aheng_listener_loop():
                 "阿珩", clean_history_text, file_type="aheng_private"
             )
             send_tg_message(
-                formatted_reply_with_model,
-                target_chat_id=chat_id,
-                sender="aheng",
+                formatted_reply, target_chat_id=chat_id, sender="aheng"
             )
     except Exception:
       time.sleep(2)
@@ -682,7 +668,7 @@ def main():
           # 私聊阿澈
           if not is_group and chat_id == MY_CHAT_ID:
             save_chat_history("阿渺", history_text, file_type="ache_private")
-            reply, used_model = call_ai_brain(
+            reply = call_ai_brain(
                 "ache",
                 user_input=user_text,
                 is_auto=False,
@@ -691,10 +677,6 @@ def main():
             )
             update_memory(reply)
             formatted_reply = format_private_msg(reply, char_name="阿澈")
-            formatted_reply_with_model = (
-                f"{formatted_reply}\n<small>🤖 {used_model}</small>"
-            )
-
             clean_history_text = (
                 reply.replace("💬", "")
                 .replace("[阿澈]", "")
@@ -705,9 +687,7 @@ def main():
                 "阿澈", clean_history_text, file_type="ache_private"
             )
             send_tg_message(
-                formatted_reply_with_model,
-                target_chat_id=chat_id,
-                sender="ache",
+                formatted_reply, target_chat_id=chat_id, sender="ache"
             )
             continue
 
@@ -733,22 +713,17 @@ def main():
               first_speaker = random.choice(["ache", "aheng"])
 
             first_name = "阿珩" if first_speaker == "aheng" else "阿澈"
-            reply_first, used_model_first = call_ai_brain(
+            reply_first = call_ai_brain(
                 first_speaker,
                 user_input=user_text,
                 is_group=True,
                 image_b64=image_b64,
             )
             clean_first = format_group_msg(reply_first)
-            clean_first_with_model = (
-                f"{clean_first}\n<small>🤖 {used_model_first}</small>"
-            )
 
             save_chat_history(first_name, clean_first, file_type="group")
             send_tg_message(
-                clean_first_with_model,
-                target_chat_id=chat_id,
-                sender=first_speaker,
+                clean_first, target_chat_id=chat_id, sender=first_speaker
             )
 
             last_speaker = first_speaker
@@ -771,20 +746,14 @@ def main():
                     "請以阿澈身分直接回答，嚴禁輸出內心話。[END]"
                 )
 
-              reply_text, used_model_next = call_ai_brain(
+              reply_text = call_ai_brain(
                   next_speaker, user_input=prompt_msg, is_group=True
               )
               clean_text = format_group_msg(reply_text)
-              clean_text_with_model = (
-                  f"{clean_text}\n<small>🤖 {used_model_next}</small>"
-              )
-
               speaker_name = "阿珩" if next_speaker == "aheng" else "阿澈"
               save_chat_history(speaker_name, clean_text, file_type="group")
               send_tg_message(
-                  clean_text_with_model,
-                  target_chat_id=chat_id,
-                  sender=next_speaker,
+                  clean_text, target_chat_id=chat_id, sender=next_speaker
               )
               break
 
