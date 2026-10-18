@@ -44,27 +44,24 @@ def run_dummy_server():
 # ================= 基礎設定 (全數改從安全環境變數讀取) =================
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# 從 Render Environment 讀取 Telegram Token & Gist 設定
+# Telegram Token & GAS Web App URL
 TG_BOT_TOKEN_ACHE = os.environ.get("TG_BOT_TOKEN_ACHE", "").strip()
 TG_BOT_TOKEN_AHENG = os.environ.get("TG_BOT_TOKEN_AHENG", "").strip()
-GIST_ID = os.environ.get("GIST_ID", "").strip()
-GIST_TOKEN = os.environ.get("GIST_TOKEN", "").strip()
+GAS_URL = os.environ.get(
+    "GAS_URL",
+    "https://script.google.com/macros/s/AKfycby4tMdu7i-q6GMB4oDgv-KryNHyrGyDYu2Q-mUdBbqDwhVtDDbAF6rAN14givsslQUJ/exec",
+).strip()
 MY_CHAT_ID = 8773051890
 
 tg_base_ache = "https://api.telegram.org/bot" + TG_BOT_TOKEN_ACHE
 TG_SEND_URL_ACHE = tg_base_ache + "/sendMessage"
-TG_UPDATES_URL_ACHE = tg_base_ache + "/getUpdates"
 
 tg_base_aheng = "https://api.telegram.org/bot" + TG_BOT_TOKEN_AHENG
 TG_SEND_URL_AHENG = tg_base_aheng + "/sendMessage"
-TG_UPDATES_URL_AHENG = tg_base_aheng + "/getUpdates"
 
-# 遵照模型設定
+# 候選模型
 CANDIDATE_MODELS = [
     "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash"
 ]
 
 session = requests.Session()
@@ -76,72 +73,47 @@ aheng_history = []
 group_history = []
 
 
-# ================= GitHub Gist 直連同步機制 =================
-def fetch_gist_data():
-  """直接從 Gist 抓取最新資料並更新記憶體，若失敗則維持現有記憶體"""
+# ================= Google Sheets (GAS API) 同步機制 =================
+def fetch_sheet_data():
+  """直接從 Google 試算表抓取最新資料並更新記憶體"""
   global notes, chat_history, aheng_history, group_history
-  if not GIST_ID or not GIST_TOKEN:
-    print("⚠️ 未設定 GIST_ID 或 GIST_TOKEN，使用純記憶體模式。")
+  if not GAS_URL:
+    print("⚠️ 未設定 GAS_URL，使用純記憶體模式。")
     return
-  url = f"https://api.github.com/gists/{GIST_ID}"
-  headers = {
-      "Authorization": f"Bearer {GIST_TOKEN}",
-      "Accept": "application/vnd.github+json",
-  }
   try:
-    res = session.get(url, headers=headers, timeout=10)
+    res = session.get(GAS_URL, timeout=10)
     if res.status_code == 200:
-      files = res.json().get("files", {})
-      if "bot_data.json" in files:
-        raw_content = files["bot_data.json"].get("content", "{}")
-        all_data = json.loads(raw_content)
-
-        notes = all_data.get("notes", [])
-        chat_history = all_data.get("ache_private", [])
-        aheng_history = all_data.get("aheng_private", [])
-        group_history = all_data.get("group", [])
+      all_data = res.json()
+      notes = all_data.get("notes", [])
+      chat_history = all_data.get("ache_private", [])
+      aheng_history = all_data.get("aheng_private", [])
+      group_history = all_data.get("group", [])
   except Exception as e:
-    print(f"⚠️ 從 Gist 讀取資料失敗: {e}")
+    print(f"⚠️ 從 Google 試算表讀取資料失敗: {e}")
 
 
-def push_gist_data():
-  """將目前記憶體中的最新資料同步寫入 Gist"""
-  if not GIST_ID or not GIST_TOKEN:
+def push_sheet_data():
+  """將目前記憶體中的最新資料同步寫入 Google 試算表"""
+  if not GAS_URL:
     return
-  url = f"https://api.github.com/gists/{GIST_ID}"
-  headers = {
-      "Authorization": f"Bearer {GIST_TOKEN}",
-      "Accept": "application/vnd.github+json",
-  }
-
   payload = {
-      "files": {
-          "bot_data.json": {
-              "content": json.dumps(
-                  {
-                      "notes": notes,
-                      "ache_private": chat_history,
-                      "aheng_private": aheng_history,
-                      "group": group_history,
-                  },
-                  ensure_ascii=False,
-                  indent=2,
-              )
-          }
-      }
+      "notes": notes,
+      "ache_private": chat_history,
+      "aheng_private": aheng_history,
+      "group": group_history,
   }
   try:
-    res = session.patch(url, headers=headers, json=payload, timeout=10)
+    res = session.post(GAS_URL, json=payload, timeout=15)
     if res.status_code == 200:
-      print("☁️ [Gist 同步成功] 最新記憶與歷史已更新至 GitHub！")
+      print("📊 [試算表同步成功] 最新記憶與歷史已更新至 Google Sheets！")
     else:
-      print(f"⚠️ 寫入 Gist 失敗，HTTP 狀態碼: {res.status_code}")
+      print(f"⚠️ 寫入 Google 試算表失敗，HTTP 狀態碼: {res.status_code}")
   except Exception as e:
-    print(f"⚠️ 備份至 Gist 失敗: {e}")
+    print(f"⚠️ 備份至 Google 試算表失敗: {e}")
 
 
-# 初始化時先從 Gist 拉取一次資料
-fetch_gist_data()
+# 初始化時先從 Google 試算表拉取一次資料
+fetch_sheet_data()
 
 
 # ================= 時間 Parsing 輔助函數 =================
@@ -154,7 +126,6 @@ def parse_msg_time(text):
       return datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M")
     except Exception:
       pass
-  # 無法解析或無時間戳的舊資料，回傳極早時間（確保排序被放在最前面並被後續截取過濾）
   return datetime.datetime.min
 
 
@@ -209,7 +180,6 @@ def format_group_msg(raw_text):
 
 # ================= Telegram 圖片下載與 Base64 轉換 =================
 def get_tg_file_b64(file_id, token):
-  """抓取 Telegram 圖片並轉為 Base64 字串"""
   try:
     res = session.get(
         f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}",
@@ -229,17 +199,10 @@ def get_tg_file_b64(file_id, token):
   return None
 
 
-# ================= 記憶與備忘管理 (直連 Gist) =================
-def load_memory():
-  """直接從 Gist 讀取最新的備忘清單"""
-  fetch_gist_data()
-  return notes
-
-
+# ================= 記憶與備忘管理 =================
 def update_memory(raw_text):
-  """依據指令更新備忘並同步回 Gist"""
   global notes
-  fetch_gist_data()  # 更新前先抓取最新狀況，避免複寫
+  fetch_sheet_data()
   changed = False
 
   weekdays = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
@@ -267,28 +230,27 @@ def update_memory(raw_text):
         print(f"🧹 [記憶清除] {item}")
 
   if changed:
-    push_gist_data()
+    push_sheet_data()
 
 
-# ================= 對話歷史持久化 (直連 Gist) =================
+# ================= 對話歷史持久化 =================
 def save_chat_history(role, text, file_type="ache_private"):
-  """將訊息存入記憶體並直接同步更新至 Gist"""
   global chat_history, aheng_history, group_history
 
-  fetch_gist_data()  # 寫入前先更新最新紀錄，避免多端覆寫
+  fetch_sheet_data()
 
   weekdays = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
   now = datetime.datetime.now()
   time_tag = f"[{now.strftime('%Y-%m-%d')} {weekdays[now.weekday()]} {now.strftime('%H:%M')}]"
 
   if file_type == "group":
-    group_history.append((role, f"{time_tag} {text}"))
+    group_history.append([role, f"{time_tag} {text}"])
   elif file_type == "aheng_private":
-    aheng_history.append((role, f"{time_tag} {text}"))
+    aheng_history.append([role, f"{time_tag} {text}"])
   else:
-    chat_history.append((role, f"{time_tag} {text}"))
+    chat_history.append([role, f"{time_tag} {text}"])
 
-  push_gist_data()
+  push_sheet_data()
 
 
 # ================= 載入人設 =================
@@ -417,8 +379,7 @@ def call_ai_brain(
     extra_context="",
     image_b64=None,
 ):
-  # 呼叫大腦時先從 Gist 抓取最新紀錄
-  fetch_gist_data()
+  fetch_sheet_data()
 
   current_key = os.environ.get("GEMINI_API_KEY", "").strip()
   if not current_key:
@@ -446,8 +407,6 @@ def call_ai_brain(
   tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
 
   combined_history = tagged_private + tagged_group
-
-  # 修正重點：使用解析後的『真實時間』排序，絕不使用預設字串 sort()，並只取最新 100 條
   combined_history.sort(key=lambda item: parse_msg_time(item[1]))
   recent_history = combined_history[-100:]
 
@@ -468,7 +427,6 @@ def call_ai_brain(
         f"最近對話紀錄：\n{history_str}\n對方發言：{user_input}\n請以{char_name}的身分回覆："
     )
 
-  # 打包 Parts（若有圖片則一併加入）
   parts = [{"text": prompt}]
   if image_b64:
     parts.append({"inlineData": {"mimeType": "image/jpeg", "data": image_b64}})
@@ -533,8 +491,7 @@ def random_tick_loop():
     now = datetime.datetime.now()
 
     if 6 <= now.hour < 22:
-      fetch_gist_data()
-      # 檢查最後一條對話時間，若 30 分鐘內才剛聊過則直接 skip 不打擾
+      fetch_sheet_data()
       tagged_private = [(f"{role}(私聊)", text) for role, text in chat_history]
       tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
       all_combined = tagged_private + tagged_group
@@ -545,7 +502,7 @@ def random_tick_loop():
         if last_time != datetime.datetime.min:
           diff_minutes = (now - last_time).total_seconds() / 60
           if diff_minutes < 30:
-            continue  # 剛聊完不到 30 分鐘，暫不打擾
+            continue
 
       msg = call_ai_brain("ache", is_auto=True, is_group=False)
       if "[SILENCE]" in msg or not msg.strip() or "⚠️" in msg:
@@ -553,7 +510,6 @@ def random_tick_loop():
 
       update_memory(msg)
       formatted_msg = format_private_msg(msg, char_name="阿澈")
-      # 保留完整對話與內心想法，存入歷史紀錄
       clean_history_text = (
           msg.replace("💬", "")
           .replace("[阿澈]", "")
@@ -620,7 +576,6 @@ def aheng_listener_loop():
                 image_b64=image_b64,
             )
             formatted_reply = format_private_msg(reply, char_name="阿珩")
-            # 保留完整對話與內心想法，存入歷史紀錄
             clean_history_text = (
                 reply.replace("💬", "")
                 .replace("[阿澈]", "")
@@ -640,7 +595,7 @@ def aheng_listener_loop():
 # ================= 主迴圈：阿澈私聊 & 群組相聲邏輯 =================
 def main():
   threading.Thread(target=run_dummy_server, daemon=True).start()
-  print("\n雙人模式已啟動（阿澈 + 阿珩待命中）...")
+  print("\n雙人模式已啟動（阿澈 + 阿珩待命中，資料庫對接 Google Sheets）...")
 
   threading.Thread(target=random_tick_loop, daemon=True).start()
   threading.Thread(target=aheng_listener_loop, daemon=True).start()
@@ -703,7 +658,6 @@ def main():
             )
             update_memory(reply)
             formatted_reply = format_private_msg(reply, char_name="阿澈")
-            # 保留完整對話與內心想法，存入歷史紀錄
             clean_history_text = (
                 reply.replace("💬", "")
                 .replace("[阿澈]", "")
