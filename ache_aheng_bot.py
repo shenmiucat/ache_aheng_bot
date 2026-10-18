@@ -485,13 +485,13 @@ def call_ai_brain(
       try:
         res = session.post(
             url, headers=headers, json=payload, verify=False, timeout=30
-        )
+        ）
         if res.status_code == 200:
-          return (
-              res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+          raw_reply = (
+            res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
           )
-          # 在回答最後面補上模型名稱標籤
-          return f"{raw_reply}\n<code>🤖 {model_name}</code>"
+          # 在回答最後面補上模型名稱標籤（使用 HTML 灰字或小字格式）
+          return f"{raw_reply}\n<small>🤖 {model_name}</small>"
         elif res.status_code == 429:
           last_error = "HTTP 429 (達到頻率限制)"
           time.sleep(2)
