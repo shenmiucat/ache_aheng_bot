@@ -86,13 +86,18 @@ def fetch_sheet_data():
     print("⚠️ 未設定 GAS_URL，使用純記憶體模式。")
     return
   try:
-    res = session.get(GAS_URL, timeout=10)
+    res = session.get(GAS_URL, allow_redirects=True, timeout=15)
     if res.status_code == 200:
-      all_data = res.json()
-      notes = all_data.get("notes", [])
-      chat_history = all_data.get("ache_private", [])
-      aheng_history = all_data.get("aheng_private", [])
-      group_history = all_data.get("group", [])
+      try:
+        all_data = res.json()
+        notes = all_data.get("notes", [])
+        chat_history = all_data.get("ache_private", [])
+        aheng_history = all_data.get("aheng_private", [])
+        group_history = all_data.get("group", [])
+      except Exception as json_err:
+        print(f"⚠️ GAS 回傳內容非 JSON 格式 (內容預覽): {res.text[:100]}")
+    else:
+      print(f"⚠️ 讀取試算表失敗，HTTP 狀態碼: {res.status_code}")
   except Exception as e:
     print(f"⚠️ 從 Google 試算表讀取資料失敗: {e}")
 
@@ -108,7 +113,9 @@ def push_sheet_data():
       "group": group_history,
   }
   try:
-    res = session.post(GAS_URL, json=payload, timeout=15)
+    res = session.post(
+        GAS_URL, json=payload, allow_redirects=True, timeout=15
+    )
     if res.status_code == 200:
       print("📊 [試算表同步成功] 最新記憶與歷史已更新至 Google Sheets！")
     else:
