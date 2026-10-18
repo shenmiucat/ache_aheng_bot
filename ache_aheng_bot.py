@@ -83,48 +83,25 @@ def fetch_sheet_data():
   """直接從 Google 試算表抓取最新資料並更新記憶體"""
   global notes, chat_history, aheng_history, group_history
   if not GAS_URL:
+    print("⚠️ 未設定 GAS_URL，使用純記憶體模式。")
     return
   try:
     headers = {
-        'User-Agent': (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
     }
-    res = session.get(GAS_URL, headers=headers, allow_redirects=True, timeout=15)
-    if res.status_code == 200 and res.text.strip().startswith('{'):
-      all_data = res.json()
-      notes = all_data.get('notes', [])
-      chat_history = all_data.get('ache_private', [])
-      aheng_history = all_data.get('aheng_private', [])
-      group_history = all_data.get('group', [])
-  except Exception as e:
-    print(f'⚠️ 從 Google 試算表讀取資料失敗: {e}')
-
-
-def push_sheet_data():
-  """將目前記憶體中的最新資料同步寫入 Google 試算表"""
-  if not GAS_URL:
-    return
-  payload = {
-      'notes': notes,
-      'ache_private': chat_history,
-      'aheng_private': aheng_history,
-      'group': group_history,
-  }
-  try:
-    headers = {'Content-Type': 'application/json'}
-    # 發送 POST 請求
-    res = session.post(
-        GAS_URL,
-        data=json.dumps(payload),
-        headers=headers,
-        allow_redirects=True,
-        timeout=15,
+    res = session.get(
+        GAS_URL, headers=headers, allow_redirects=True, timeout=15
     )
-    if res.status_code == 200:
-      print('📊 [試算表同步成功] 最新記憶與歷史已更新至 Google Sheets！')
+    if res.status_code == 200 and res.text.strip().startswith("{"):
+      all_data = res.json()
+      notes = all_data.get("notes", [])
+      chat_history = all_data.get("ache_private", [])
+      aheng_history = all_data.get("aheng_private", [])
+      group_history = all_data.get("group", [])
   except Exception as e:
-    print(f'⚠️ 備份至 Google 試算表失敗: {e}')
+    print(f"⚠️ 從 Google 試算表讀取資料失敗: {e}")
 
 
 def push_sheet_data():
@@ -138,13 +115,16 @@ def push_sheet_data():
       "group": group_history,
   }
   try:
+    headers = {"Content-Type": "application/json"}
     res = session.post(
-        GAS_URL, json=payload, allow_redirects=True, timeout=15
+        GAS_URL,
+        data=json.dumps(payload),
+        headers=headers,
+        allow_redirects=True,
+        timeout=15,
     )
     if res.status_code == 200:
       print("📊 [試算表同步成功] 最新記憶與歷史已更新至 Google Sheets！")
-    else:
-      print(f"⚠️ 寫入 Google 試算表失敗，HTTP 狀態碼: {res.status_code}")
   except Exception as e:
     print(f"⚠️ 備份至 Google 試算表失敗: {e}")
 
@@ -407,7 +387,7 @@ def get_ticktick_summary():
   return "【阿渺今天的待辦】: 今天無特定排程待辦。"
 
 
-# ================= 呼叫 Gemini 大腦 =================
+# ================= 呼叫 Gemini 大腦 (回傳 reply 與成功的 model_name) =================
 def call_ai_brain(
     character="ache",
     user_input=None,
@@ -420,7 +400,10 @@ def call_ai_brain(
 
   current_key = os.environ.get("GEMINI_API_KEY", "").strip()
   if not current_key:
-    return f"⚠️ [{character}] 呼叫失敗：Render 環境變數未讀取到 GEMINI_API_KEY"
+    return (
+        f"⚠️ [{character}] 呼叫失敗：Render 環境變數未讀取到 GEMINI_API_KEY",
+        "unknown",
+    )
 
   weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
   now = datetime.datetime.now()
@@ -487,10 +470,10 @@ def call_ai_brain(
             url, headers=headers, json=payload, verify=False, timeout=30
         )
         if res.status_code == 200:
-          raw_reply = (
-            res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+          raw_text = (
+              res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
           )
-          return f"{raw_reply}\n<small>🤖 {model_name}</small>"
+          return raw_text, model_name
         elif res.status_code == 429:
           last_error = "HTTP 429 (達到頻率限制)"
           time.sleep(2)
@@ -499,7 +482,7 @@ def call_ai_brain(
       except Exception as e:
         last_error = f"連線異常: {e}"
 
-  return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
+  return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}", "unknown"
 
 
 # ================= 發送 TG 訊息 =================
@@ -542,12 +525,16 @@ def random_tick_loop():
           if diff_minutes < 30:
             continue
 
-      msg = call_ai_brain("ache", is_auto=True, is_group=False)
+      msg, used_model = call_ai_brain("ache", is_auto=True, is_group=False)
       if "[SILENCE]" in msg or not msg.strip() or "⚠️" in msg:
         continue
 
       update_memory(msg)
       formatted_msg = format_private_msg(msg, char_name="阿澈")
+      formatted_msg_with_model = (
+          f"{formatted_msg}\n<small>🤖 {used_model}</small>"
+      )
+
       clean_history_text = (
           msg.replace("💬", "")
           .replace("[阿澈]", "")
@@ -555,7 +542,9 @@ def random_tick_loop():
           .strip()
       )
       save_chat_history("阿澈", clean_history_text, file_type="ache_private")
-      send_tg_message(formatted_msg, target_chat_id=MY_CHAT_ID, sender="ache")
+      send_tg_message(
+          formatted_msg_with_model, target_chat_id=MY_CHAT_ID, sender="ache"
+      )
 
 
 # ================= 專屬監聽：阿珩私聊視窗 =================
@@ -606,7 +595,7 @@ def aheng_listener_loop():
 
           if chat_type == "private" and chat_id == MY_CHAT_ID:
             save_chat_history("阿渺", history_text, file_type="aheng_private")
-            reply = call_ai_brain(
+            reply, used_model = call_ai_brain(
                 "aheng",
                 user_input=user_text,
                 is_auto=False,
@@ -614,6 +603,10 @@ def aheng_listener_loop():
                 image_b64=image_b64,
             )
             formatted_reply = format_private_msg(reply, char_name="阿珩")
+            formatted_reply_with_model = (
+                f"{formatted_reply}\n<small>🤖 {used_model}</small>"
+            )
+
             clean_history_text = (
                 reply.replace("💬", "")
                 .replace("[阿澈]", "")
@@ -624,7 +617,9 @@ def aheng_listener_loop():
                 "阿珩", clean_history_text, file_type="aheng_private"
             )
             send_tg_message(
-                formatted_reply, target_chat_id=chat_id, sender="aheng"
+                formatted_reply_with_model,
+                target_chat_id=chat_id,
+                sender="aheng",
             )
     except Exception:
       time.sleep(2)
@@ -687,7 +682,7 @@ def main():
           # 私聊阿澈
           if not is_group and chat_id == MY_CHAT_ID:
             save_chat_history("阿渺", history_text, file_type="ache_private")
-            reply = call_ai_brain(
+            reply, used_model = call_ai_brain(
                 "ache",
                 user_input=user_text,
                 is_auto=False,
@@ -696,6 +691,10 @@ def main():
             )
             update_memory(reply)
             formatted_reply = format_private_msg(reply, char_name="阿澈")
+            formatted_reply_with_model = (
+                f"{formatted_reply}\n<small>🤖 {used_model}</small>"
+            )
+
             clean_history_text = (
                 reply.replace("💬", "")
                 .replace("[阿澈]", "")
@@ -706,7 +705,9 @@ def main():
                 "阿澈", clean_history_text, file_type="ache_private"
             )
             send_tg_message(
-                formatted_reply, target_chat_id=chat_id, sender="ache"
+                formatted_reply_with_model,
+                target_chat_id=chat_id,
+                sender="ache",
             )
             continue
 
@@ -732,17 +733,22 @@ def main():
               first_speaker = random.choice(["ache", "aheng"])
 
             first_name = "阿珩" if first_speaker == "aheng" else "阿澈"
-            reply_first = call_ai_brain(
+            reply_first, used_model_first = call_ai_brain(
                 first_speaker,
                 user_input=user_text,
                 is_group=True,
                 image_b64=image_b64,
             )
             clean_first = format_group_msg(reply_first)
+            clean_first_with_model = (
+                f"{clean_first}\n<small>🤖 {used_model_first}</small>"
+            )
 
             save_chat_history(first_name, clean_first, file_type="group")
             send_tg_message(
-                clean_first, target_chat_id=chat_id, sender=first_speaker
+                clean_first_with_model,
+                target_chat_id=chat_id,
+                sender=first_speaker,
             )
 
             last_speaker = first_speaker
@@ -765,14 +771,20 @@ def main():
                     "請以阿澈身分直接回答，嚴禁輸出內心話。[END]"
                 )
 
-              reply_text = call_ai_brain(
+              reply_text, used_model_next = call_ai_brain(
                   next_speaker, user_input=prompt_msg, is_group=True
               )
               clean_text = format_group_msg(reply_text)
+              clean_text_with_model = (
+                  f"{clean_text}\n<small>🤖 {used_model_next}</small>"
+              )
+
               speaker_name = "阿珩" if next_speaker == "aheng" else "阿澈"
               save_chat_history(speaker_name, clean_text, file_type="group")
               send_tg_message(
-                  clean_text, target_chat_id=chat_id, sender=next_speaker
+                  clean_text_with_model,
+                  target_chat_id=chat_id,
+                  sender=next_speaker,
               )
               break
 
