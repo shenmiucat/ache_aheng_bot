@@ -83,23 +83,48 @@ def fetch_sheet_data():
   """直接從 Google 試算表抓取最新資料並更新記憶體"""
   global notes, chat_history, aheng_history, group_history
   if not GAS_URL:
-    print("⚠️ 未設定 GAS_URL，使用純記憶體模式。")
     return
   try:
-    res = session.get(GAS_URL, allow_redirects=True, timeout=15)
-    if res.status_code == 200:
-      try:
-        all_data = res.json()
-        notes = all_data.get("notes", [])
-        chat_history = all_data.get("ache_private", [])
-        aheng_history = all_data.get("aheng_private", [])
-        group_history = all_data.get("group", [])
-      except Exception as json_err:
-        print(f"⚠️ GAS 回傳內容非 JSON 格式 (內容預覽): {res.text[:100]}")
-    else:
-      print(f"⚠️ 讀取試算表失敗，HTTP 狀態碼: {res.status_code}")
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        )
+    }
+    res = session.get(GAS_URL, headers=headers, allow_redirects=True, timeout=15)
+    if res.status_code == 200 and res.text.strip().startswith('{'):
+      all_data = res.json()
+      notes = all_data.get('notes', [])
+      chat_history = all_data.get('ache_private', [])
+      aheng_history = all_data.get('aheng_private', [])
+      group_history = all_data.get('group', [])
   except Exception as e:
-    print(f"⚠️ 從 Google 試算表讀取資料失敗: {e}")
+    print(f'⚠️ 從 Google 試算表讀取資料失敗: {e}')
+
+
+def push_sheet_data():
+  """將目前記憶體中的最新資料同步寫入 Google 試算表"""
+  if not GAS_URL:
+    return
+  payload = {
+      'notes': notes,
+      'ache_private': chat_history,
+      'aheng_private': aheng_history,
+      'group': group_history,
+  }
+  try:
+    headers = {'Content-Type': 'application/json'}
+    # 發送 POST 請求
+    res = session.post(
+        GAS_URL,
+        data=json.dumps(payload),
+        headers=headers,
+        allow_redirects=True,
+        timeout=15,
+    )
+    if res.status_code == 200:
+      print('📊 [試算表同步成功] 最新記憶與歷史已更新至 Google Sheets！')
+  except Exception as e:
+    print(f'⚠️ 備份至 Google 試算表失敗: {e}')
 
 
 def push_sheet_data():
