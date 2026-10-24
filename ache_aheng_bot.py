@@ -435,7 +435,7 @@ def call_ai_brain(
     prompt = (
         f"{mode_str}\n現在時間是：{current_time}\n{tasks_text}{memory_str}"
         f"最近對話紀錄：\n{history_str}\n"
-        "這是你隨機想主動敲她一下。"
+        "這是你隨機想主動敲她一下，也可以分享自己的近況、生活雜談或突然想到的事。"
     )
   else:
     context_str = f"\n【現場情況】\n{extra_context}\n" if extra_context else ""
