@@ -472,9 +472,11 @@ def call_ai_brain(
           )
           # 原汁原味的回傳，僅在最後面附帶 Telegram 標準斜體 <i> 標籤
           return f"{raw_reply}\n<i>🤖 {model_name}</i>"
-        elif res.status_code == 429:
-          last_error = "HTTP 429 (達到頻率限制)"
-          time.sleep(2)
+        # 將 403 與 429 一起併入配額/頻率限制的處理邏輯
+        elif res.status_code in (429, 403):
+          last_error = f"HTTP {res.status_code} (觸發頻率或 Billing 誤報限制)"
+          time.sleep(3)  # 遇到頻率限制時，稍微拉長休眠時間給 API 冷卻
+          continue
         else:
           last_error = f"HTTP {res.status_code} - {res.text[:80]}"
       except Exception as e:
