@@ -468,7 +468,6 @@ def call_ai_brain(
             f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={current_key}",
         ]
 
-        model_success = False
         for url in urls:
             try:
                 res = session.post(
@@ -480,13 +479,9 @@ def call_ai_brain(
                     )
                     # 原汁原味的回傳，僅在最後面附帶 Telegram 標準斜體 <i> 標籤
                     return f"{raw_reply}\n<i>🤖 {model_name}</i>"
-                # 將 403 與 429 一起併入配額/頻率限制的處理邏輯
-                elif res.status_code in (429, 403):
-                    last_error = f"HTTP {res.status_code} (觸發頻率或 Billing 誤報限制)"
-                    time.sleep(3)  # 遇到頻率限制時，稍微拉長休眠時間給 API 冷卻
-                    break  # 直接切換至下一個候選模型
                 else:
-                    last_error = f"HTTP {res.status_code} - {res.text[:80]}"
+                    # 徹底保留原汁原味的 HTTP 狀態碼與 API 原生回應，不做任何贅字包裝或邏輯處理
+                    last_error = f"HTTP {res.status_code} - {res.text[:120]}"
             except Exception as e:
                 last_error = f"連線異常: {e}"
 
