@@ -432,7 +432,7 @@ def call_ai_brain(
 
     combined_history = tagged_private + tagged_group
     combined_history.sort(key=lambda item: parse_msg_time(item[1]))
-    recent_history = combined_history[-100:]
+    recent_history = combined_history[-30:]
 
     history_str = "\n".join(
         [f"{role}: {text}" for role, text in recent_history]
