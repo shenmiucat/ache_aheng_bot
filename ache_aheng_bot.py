@@ -464,12 +464,9 @@ def call_ai_brain(
 
     last_error = "所有連線嘗試皆失敗"
     for model_name in CANDIDATE_MODELS:
-        urls = [
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}",
-            f"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model_name}:generateContent?key={current_key}",
-        ]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
 
-        for url in urls:
+        for attempt in range(2):
             try:
                 res = session.post(
                     url, headers=headers, json=payload, verify=False, timeout=30
@@ -481,10 +478,15 @@ def call_ai_brain(
                     # 原汁原味的回傳，僅在最後面附帶 Telegram 標準斜體 <i> 標籤
                     return f"{raw_reply}\n<i>🤖 {model_name}</i>"
                 else:
-                    # 徹底保留原汁原味的 HTTP 狀態碼與 API 原生回應，不做任何贅字包裝或邏輯處理
                     last_error = f"HTTP {res.status_code} - {res.text[:120]}"
+                    print(f"⚠️ [{model_name}] 第 {attempt + 1} 次失敗: {last_error}")
+                    if res.status_code in (403, 429):
+                        break
+                    time.sleep(1)
             except Exception as e:
                 last_error = f"連線異常: {e}"
+                print(f"⚠️ [{model_name}] 第 {attempt + 1} 次異常: {last_error}")
+                time.sleep(1)
 
     return f"⚠️ [{char_name} 呼叫失敗] 原因：{last_error}"
 
