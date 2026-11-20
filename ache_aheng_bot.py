@@ -460,9 +460,21 @@ def call_ai_brain(
     payload = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"parts": parts}],
+        "generationConfig": {
+            "maxOutputTokens": 1000,
+            "temperature": 0.85,
+        },
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ],
     }
 
     last_error = "所有連線嘗試皆失敗"
+    valid_endings = ("。", "！", "？", "~", "～", "…", "」", "』", "）", ")", "!", "?", "”", "\"")
+
     for model_name in CANDIDATE_MODELS:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={current_key}"
 
@@ -472,10 +484,31 @@ def call_ai_brain(
                     url, headers=headers, json=payload, verify=False, timeout=30
                 )
                 if res.status_code == 200:
+                    data = res.json()
+                    candidate = data.get("candidates", [{}])[0]
+                    finish_reason = candidate.get("finishReason", "STOP")
                     raw_reply = (
-                        res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        candidate.get("content", {})
+                        .get("parts", [{}])[0]
+                        .get("text", "")
+                        .strip()
                     )
-                    # 原汁原味的回傳，僅在最後面附帶 Telegram 標準斜體 <i> 標籤
+
+                    # 檢查是否被異常截斷，或句子沒講完（不以正常標點收尾且非 [SILENCE]）
+                    is_cut_off = (
+                        finish_reason not in ("STOP", "")
+                        or (
+                            raw_reply
+                            and "[SILENCE]" not in raw_reply
+                            and not raw_reply.endswith(valid_endings)
+                        )
+                    )
+
+                    if is_cut_off and attempt == 0:
+                        print(f"⚠️ [{model_name}] 偵測到句子未完整收尾 ({finish_reason})，自動重試一次...")
+                        time.sleep(1)
+                        continue
+
                     return f"{raw_reply}\n<i>🤖 {model_name}</i>"
                 else:
                     last_error = f"HTTP {res.status_code} - {res.text[:120]}"
