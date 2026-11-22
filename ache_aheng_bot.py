@@ -461,7 +461,7 @@ def call_ai_brain(
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 1000,
+            "maxOutputTokens": 2048,
             "temperature": 0.85,
         },
         "safetySettings": [
@@ -494,20 +494,34 @@ def call_ai_brain(
                         .strip()
                     )
 
-                    # 檢查是否被異常截斷，或句子沒講完（不以正常標點收尾且非 [SILENCE]）
+                    # 檢查私聊是否漏掉內心話、是否異常截斷，或句子沒正常收尾
+                    missing_thought = (
+                        not is_group
+                        and "[SILENCE]" not in raw_reply
+                        and "💭" not in raw_reply
+                    )
                     is_cut_off = (
-                        finish_reason not in ("STOP", "")
+                        not raw_reply
+                        or finish_reason not in ("STOP", "")
+                        or missing_thought
                         or (
-                            raw_reply
-                            and "[SILENCE]" not in raw_reply
+                            "[SILENCE]" not in raw_reply
                             and not raw_reply.endswith(valid_endings)
                         )
                     )
 
-                    if is_cut_off and attempt == 0:
-                        print(f"⚠️ [{model_name}] 偵測到句子未完整收尾 ({finish_reason})，自動重試一次...")
-                        time.sleep(1)
-                        continue
+                    if is_cut_off:
+                        last_error = (
+                            f"輸出不完整 ({finish_reason}, 缺內心話={missing_thought}): "
+                            f"{raw_reply[:20]}"
+                        )
+                        print(f"⚠️ [{model_name}] 第 {attempt + 1} 次異常: {last_error}")
+                        if attempt == 0:
+                            time.sleep(1)
+                            continue
+                        else:
+                            # 同一模型重試一次仍不完整，跳出內層迴圈改換下一個候選模型
+                            break
 
                     return f"{raw_reply}\n<i>🤖 {model_name}</i>"
                 else:
