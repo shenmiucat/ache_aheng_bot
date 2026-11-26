@@ -153,14 +153,25 @@ def parse_msg_time(text):
 
 
 # ================= 輔助文字清理與格式化 =================
-def format_private_msg(raw_text, char_name="阿澈"):
-    clean = "\n".join([
+def strip_memory_lines(raw_text):
+    """移除模型輸出的記憶指令行，避免直接顯示在對話框中"""
+    memory_prefixes = (
+        "📝 記住：",
+        "📝記住：",
+        "🗑 忘記：",
+        "🗑忘記：",
+        "🗑️ 忘記：",
+        "🗑️忘記：",
+    )
+    return "\n".join([
         line
         for line in raw_text.split("\n")
-        if not line.strip().startswith("📝 記住：")
-        and not line.strip().startswith("🗑 忘記：")
-        and not line.strip().startswith("🗑️ 忘記：")
+        if not line.strip().startswith(memory_prefixes)
     ])
+
+
+def format_private_msg(raw_text, char_name="阿澈"):
+    clean = strip_memory_lines(raw_text)
 
     if "💭" in clean:
         parts = clean.split("💭", 1)
@@ -188,7 +199,7 @@ def format_private_msg(raw_text, char_name="阿澈"):
 
 
 def format_group_msg(raw_text):
-    text = raw_text.replace("[END]", "")
+    text = strip_memory_lines(raw_text).replace("[END]", "")
     if "💭" in text:
         text = text.split("💭")[0]
     return (
@@ -235,17 +246,25 @@ def update_memory(raw_text):
 
         for line in raw_text.split("\n"):
             line_str = line.strip()
-            if line_str.startswith("📝 記住："):
-                item = line_str.replace("📝 記住：", "").strip()
+            if line_str.startswith(("📝 記住：", "📝記住：")):
+                item = (
+                    line_str.replace("📝 記住：", "")
+                    .replace("📝記住：", "")
+                    .strip()
+                )
                 if item:
                     entry = f"{timestamp} {item}"
                     if not any(item in n for n in notes):
                         notes.append(entry)
                         changed = True
                         print(f"🧠 [記憶新增] {entry}")
-            elif line_str.startswith("🗑️ 忘記：") or line_str.startswith("🗑 忘記："):
+            elif line_str.startswith(("🗑️ 忘記：", "🗑️忘記：", "🗑 忘記：", "🗑忘記：")):
                 item = (
-                    line_str.replace("🗑️ 忘記：", "").replace("🗑 忘記：", "").strip()
+                    line_str.replace("🗑️ 忘記：", "")
+                    .replace("🗑️忘記：", "")
+                    .replace("🗑 忘記：", "")
+                    .replace("🗑忘記：", "")
+                    .strip()
                 )
                 before_len = len(notes)
                 notes = [n for n in notes if item not in n]
@@ -422,17 +441,16 @@ def call_ai_brain(
     )
     char_name = "阿澈" if character == "ache" else "阿珩"
 
+    # 開放全知視角：阿澈與阿珩共享同一份備忘錄、待辦清單與全部對話紀錄
     mem_text = "\n".join([f"- {n}" for n in notes]) if notes else "（暫無特殊備忘）"
-    memory_str = (
-        f"\n【你目前腦子裡記住的事】:\n{mem_text}\n" if character == "ache" else ""
-    )
-    tasks_text = f"{get_ticktick_summary()}\n" if character == "ache" else ""
+    memory_str = f"\n【你目前腦子裡記住的事】:\n{mem_text}\n"
+    tasks_text = f"{get_ticktick_summary()}\n"
 
-    target_private = chat_history if character == "ache" else aheng_history
-    tagged_private = [(f"{role}(私聊)", text) for role, text in target_private]
+    tagged_ache = [(f"{role}(阿澈私聊)", text) for role, text in chat_history]
+    tagged_aheng = [(f"{role}(阿珩私聊)", text) for role, text in aheng_history]
     tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
 
-    combined_history = tagged_private + tagged_group
+    combined_history = tagged_ache + tagged_aheng + tagged_group
     combined_history.sort(key=lambda item: parse_msg_time(item[1]))
     recent_history = combined_history[-30:]
 
@@ -568,9 +586,10 @@ def random_tick_loop():
         if 6 <= now.hour < 22:
             with sheet_lock:
                 fetch_sheet_data()
-                tagged_private = [(f"{role}(私聊)", text) for role, text in chat_history]
+                tagged_ache = [(f"{role}(阿澈私聊)", text) for role, text in chat_history]
+                tagged_aheng = [(f"{role}(阿珩私聊)", text) for role, text in aheng_history]
                 tagged_group = [(f"{role}(群聊)", text) for role, text in group_history]
-                all_combined = tagged_private + tagged_group
+                all_combined = tagged_ache + tagged_aheng + tagged_group
                 all_combined.sort(key=lambda item: parse_msg_time(item[1]))
 
             if all_combined:
@@ -587,7 +606,8 @@ def random_tick_loop():
             update_memory(msg)
             formatted_msg = format_private_msg(msg, char_name="阿澈")
             clean_history_text = (
-                msg.replace("💬", "")
+                strip_memory_lines(msg)
+                .replace("💬", "")
                 .replace("[阿澈]", "")
                 .replace("[阿珩]", "")
                 .strip()
@@ -654,9 +674,11 @@ def aheng_listener_loop():
                             is_group=False,
                             image_b64=image_b64,
                         )
+                        update_memory(reply)
                         formatted_reply = format_private_msg(reply, char_name="阿珩")
                         clean_history_text = (
-                            reply.replace("💬", "")
+                            strip_memory_lines(reply)
+                            .replace("💬", "")
                             .replace("[阿澈]", "")
                             .replace("[阿珩]", "")
                             .strip()
@@ -677,7 +699,7 @@ def aheng_listener_loop():
 # ================= 主迴圈：阿澈私聊 & 群組相聲邏輯 =================
 def main():
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    print("\n雙人模式已啟動（阿澈 + 阿珩待命中，資料庫對接 Google Sheets）...")
+    print("\n雙人模式已啟動（阿澈 + 阿珩全知同步待命中，資料庫對接 Google Sheets）...")
 
     threading.Thread(target=random_tick_loop, daemon=True).start()
     threading.Thread(target=aheng_listener_loop, daemon=True).start()
@@ -743,7 +765,8 @@ def main():
                         update_memory(reply)
                         formatted_reply = format_private_msg(reply, char_name="阿澈")
                         clean_history_text = (
-                            reply.replace("💬", "")
+                            strip_memory_lines(reply)
+                            .replace("💬", "")
                             .replace("[阿澈]", "")
                             .replace("[阿珩]", "")
                             .strip()
@@ -785,6 +808,7 @@ def main():
                             is_group=True,
                             image_b64=image_b64,
                         )
+                        update_memory(reply_first)
                         clean_first = format_group_msg(reply_first)
 
                         save_chat_history(first_name, clean_first, file_type="group")
@@ -815,6 +839,7 @@ def main():
                             reply_text = call_ai_brain(
                                 next_speaker, user_input=prompt_msg, is_group=True
                             )
+                            update_memory(reply_text)
                             clean_text = format_group_msg(reply_text)
                             speaker_name = "阿珩" if next_speaker == "aheng" else "阿澈"
                             save_chat_history(speaker_name, clean_text, file_type="group")
